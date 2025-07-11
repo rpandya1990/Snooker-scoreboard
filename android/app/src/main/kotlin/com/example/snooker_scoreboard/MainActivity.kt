@@ -1,4 +1,4 @@
-package com.example.snooker_scoreboard
+package com.cali_studios.snooker_scoreboard
 
 import io.flutter.embedding.android.FlutterActivity
 
