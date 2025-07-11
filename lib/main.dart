@@ -3,6 +3,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/services.dart';
+import 'package:audioplayers/audioplayers.dart';
+
+final AudioPlayer _audioPlayer = AudioPlayer();
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -204,7 +207,9 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
     });
   }
 
-  void startNewFrame() {
+  void startNewFrame() async {
+    await _audioPlayer.play(AssetSource('sounds/frame_end.mp3'));
+
     setState(() {
       if (player1.score > player2.score) player1.matchWins++;
       else if (player2.score > player1.score) player2.matchWins++;
@@ -330,7 +335,7 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text('Snooker Scoreboard')),
+      // appBar: AppBar(title: Text('Snooker Scoreboard')),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(16),
@@ -342,13 +347,13 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
                   scoreCard(player2),
                 ],
               ),
-              SizedBox(height: 20),
-              ElevatedButton(onPressed: startNewFrame, child: Text("End Frame & Start New")),
               SizedBox(height: 10),
-              ElevatedButton(
-                onPressed: resetAll,
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.grey[700]),
-                child: Text("Reset"),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                    ElevatedButton(onPressed: startNewFrame, child: Text("End Frame & Start New")),
+                    ElevatedButton(onPressed: resetAll, child: Text("Reset")),
+                ]
               ),
             ],
           ),
