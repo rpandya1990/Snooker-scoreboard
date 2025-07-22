@@ -10,9 +10,14 @@ final AudioPlayer _audioPlayer = AudioPlayer();
 class ScoreboardPage extends StatefulWidget {
   final String player1Name;
   final String player2Name;
+  final bool isPractice; // <-- New flag
 
-  const ScoreboardPage({required this.player1Name, required this.player2Name, Key? key})
-      : super(key: key);
+  const ScoreboardPage({
+    required this.player1Name,
+    required this.player2Name,
+    this.isPractice = false,  // default false for regular match
+    Key? key,
+  }) : super(key: key);
 
   @override
   _ScoreboardPageState createState() => _ScoreboardPageState();
@@ -78,62 +83,64 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
     });
   }
 
-  void _updatePlayerFrameStats() async {
-    final breakWinner = player1.maxBreakFrame > player2.maxBreakFrame ? player1 : player2;
-    final breakLoser = breakWinner == player1 ? player2 : player1;
+ void _updatePlayerFrameStats() async {
+   final breakWinner = player1.maxBreakFrame > player2.maxBreakFrame ? player1 : player2;
+   final breakLoser = breakWinner == player1 ? player2 : player1;
 
-    const int kFactor = 16;
+   const int kFactor = 16;
 
-    // Determine frame winner and loser
-    Player? frameWinner;
-    Player? frameLoser;
+   Player? frameWinner;
+   Player? frameLoser;
 
-    if (player1.score > player2.score) {
-      player1.matchWins++;
-      player1.totalFramesWon++;
-      player2.totalFramesLost++;
-      frameWinner = player1;
-      frameLoser = player2;
-    } else if (player2.score > player1.score) {
-      player2.matchWins++;
-      player2.totalFramesWon++;
-      player1.totalFramesLost++;
-      frameWinner = player2;
-      frameLoser = player1;
-    }
+   if (player1.score > player2.score) {
+     player1.matchWins++;
+     player1.totalFramesWon++;
+     player2.totalFramesLost++;
+     frameWinner = player1;
+     frameLoser = player2;
+   } else if (player2.score > player1.score) {
+     player2.matchWins++;
+     player2.totalFramesWon++;
+     player1.totalFramesLost++;
+     frameWinner = player2;
+     frameLoser = player1;
+   }
 
-    // Apply Elo rating changes if there's a winner
-    if (frameWinner != null && frameLoser != null) {
-      double expectedWinner = 1 / (1 + pow(10, (frameLoser.rating - frameWinner.rating) / 400));
-      double expectedLoser = 1 / (1 + pow(10, (frameWinner.rating - frameLoser.rating) / 400));
+   if (frameWinner != null && frameLoser != null) {
+     double expectedWinner = 1 / (1 + pow(10, (frameLoser.rating - frameWinner.rating) / 400));
+     double expectedLoser = 1 / (1 + pow(10, (frameWinner.rating - frameLoser.rating) / 400));
 
-      frameWinner.rating += (kFactor * (1 - expectedWinner)).round();
-      frameLoser.rating += (kFactor * (0 - expectedLoser)).round();
-    }
+     if (!widget.isPractice) {
+       // Only update rating if NOT practice
+       frameWinner.rating += (kFactor * (1 - expectedWinner)).round();
+       frameLoser.rating += (kFactor * (0 - expectedLoser)).round();
+     }
+   }
 
-    // Update cumulative max break
-    if (player1.maxBreakFrame > player1.cumulativeMaxBreak) {
-      player1.cumulativeMaxBreak = player1.maxBreakFrame;
-    }
-    if (player2.maxBreakFrame > player2.cumulativeMaxBreak) {
-      player2.cumulativeMaxBreak = player2.maxBreakFrame;
-    }
+   if (!widget.isPractice) {
+     // Only update overall max break if NOT practice
+     if (player1.maxBreakFrame > player1.cumulativeMaxBreak) {
+       player1.cumulativeMaxBreak = player1.maxBreakFrame;
+     }
+     if (player2.maxBreakFrame > player2.cumulativeMaxBreak) {
+       player2.cumulativeMaxBreak = player2.maxBreakFrame;
+     }
 
-    // Break-based bonus
-    if (player1.maxBreakFrame != player2.maxBreakFrame) {
-      breakWinner.rating += 2;
-      breakLoser.rating -= 1;
-    }
+     if (player1.maxBreakFrame != player2.maxBreakFrame) {
+       breakWinner.rating += 2;
+       breakLoser.rating -= 1;
+     }
 
-    // Clamp rating ranges
-    player1.rating = player1.rating.clamp(1000, 3000);
-    player2.rating = player2.rating.clamp(1000, 3000);
+     player1.rating = player1.rating.clamp(1000, 3000);
+     player2.rating = player2.rating.clamp(1000, 3000);
+   }
 
-    final prefs = await SharedPreferences.getInstance();
-    await player1.saveStats(prefs);
-    await player2.saveStats(prefs);
-  }
-
+   if (!widget.isPractice) {
+     final prefs = await SharedPreferences.getInstance();
+     await player1.saveStats(prefs);
+     await player2.saveStats(prefs);
+   }
+ }
 
 
   void resetAll() {
@@ -157,7 +164,7 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
     );
     if (points != null) {
       setState(() {
-        if (isUpdate == false) {
+        if (!isUpdate) {
           player.setScoreWithBreak(points, isUpdate, () => setState(() {}));
         } else {
           player.updateScoreWithBreak(points, () => setState(() {}));

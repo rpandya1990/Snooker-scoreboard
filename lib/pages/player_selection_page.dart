@@ -3,14 +3,17 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'scoreboard_page.dart';
 
 class PlayerSelectionPage extends StatefulWidget {
+  final bool isPractice; // optional, in case you want to forward this later
+
+  PlayerSelectionPage({this.isPractice = false});
+
   @override
   _PlayerSelectionPageState createState() => _PlayerSelectionPageState();
 }
 
 class _PlayerSelectionPageState extends State<PlayerSelectionPage> {
   List<String> players = [];
-  String? selectedPlayer1;
-  String? selectedPlayer2;
+  Set<String> selectedPlayers = {};
 
   @override
   void initState() {
@@ -23,30 +26,47 @@ class _PlayerSelectionPageState extends State<PlayerSelectionPage> {
     final savedPlayers = prefs.getStringList('playerNames') ?? [];
     setState(() {
       players = savedPlayers;
-      if (players.isNotEmpty) {
-        selectedPlayer1 = players[0];
-        selectedPlayer2 = players.length > 1 ? players[1] : players[0];
+      // Preselect first two if available
+      if (savedPlayers.length >= 2) {
+        selectedPlayers = savedPlayers.take(2).toSet();
+      } else {
+        selectedPlayers = savedPlayers.toSet();
+      }
+    });
+  }
+
+  void _onPlayerTap(String playerName) {
+    setState(() {
+      if (selectedPlayers.contains(playerName)) {
+        selectedPlayers.remove(playerName);
+      } else {
+        if (selectedPlayers.length < 2) {
+          selectedPlayers.add(playerName);
+        } else {
+          // Optionally show a message that only 2 players can be selected
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('You can select only 2 players')),
+          );
+        }
       }
     });
   }
 
   void _startMatch() {
-    if (selectedPlayer1 == null || selectedPlayer2 == null) {
+    if (selectedPlayers.length != 2) {
       ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Please select two players')));
+          SnackBar(content: Text('Please select exactly two players')));
       return;
     }
-    if (selectedPlayer1 == selectedPlayer2) {
-      ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Please select two different players')));
-      return;
-    }
+    final selectedList = selectedPlayers.toList();
+
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(
         builder: (_) => ScoreboardPage(
-          player1Name: selectedPlayer1!,
-          player2Name: selectedPlayer2!,
+          player1Name: selectedList[0],
+          player2Name: selectedList[1],
+          isPractice: widget.isPractice,
         ),
       ),
     );
@@ -63,34 +83,35 @@ class _PlayerSelectionPageState extends State<PlayerSelectionPage> {
           : Padding(
               padding: const EdgeInsets.all(16),
               child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  DropdownButtonFormField<String>(
-                    decoration: InputDecoration(labelText: 'Player 1'),
-                    value: selectedPlayer1,
-                    items: players
-                        .map((p) => DropdownMenuItem(
-                              value: p,
-                              child: Text(p),
-                            ))
-                        .toList(),
-                    onChanged: (val) => setState(() => selectedPlayer1 = val),
+                  Text(
+                    'Select exactly 2 players:',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  SizedBox(height: 12),
+                  Expanded(
+                    child: ListView.builder(
+                      itemCount: players.length,
+                      itemBuilder: (context, index) {
+                        final player = players[index];
+                        final selected = selectedPlayers.contains(player);
+                        return ListTile(
+                          title: Text(player),
+                          trailing: selected
+                              ? Icon(Icons.check_box, color: Colors.teal)
+                              : Icon(Icons.check_box_outline_blank),
+                          onTap: () => _onPlayerTap(player),
+                        );
+                      },
+                    ),
                   ),
                   SizedBox(height: 16),
-                  DropdownButtonFormField<String>(
-                    decoration: InputDecoration(labelText: 'Player 2'),
-                    value: selectedPlayer2,
-                    items: players
-                        .map((p) => DropdownMenuItem(
-                              value: p,
-                              child: Text(p),
-                            ))
-                        .toList(),
-                    onChanged: (val) => setState(() => selectedPlayer2 = val),
-                  ),
-                  SizedBox(height: 32),
-                  ElevatedButton(
-                    onPressed: _startMatch,
-                    child: Text('Start Match'),
+                  Center(
+                    child: ElevatedButton(
+                      onPressed: _startMatch,
+                      child: Text('Start Match'),
+                    ),
                   ),
                 ],
               ),

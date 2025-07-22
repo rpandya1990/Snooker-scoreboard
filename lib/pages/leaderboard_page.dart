@@ -17,8 +17,6 @@ class _LeaderboardPageState extends State<LeaderboardPage> {
 
   Future<void> _loadLeaderboardData() async {
     final prefs = await SharedPreferences.getInstance();
-    final keys = prefs.getKeys();
-
     final playerNames = prefs.getStringList('playerNames') ?? [];
 
     List<Map<String, dynamic>> playerStats = [];
@@ -37,13 +35,13 @@ class _LeaderboardPageState extends State<LeaderboardPage> {
           'framesLost': framesLost,
           'maxBreak': maxBreak,
         });
-      } catch (_) {
+      } catch (e) {
         // Skip bad entries
       }
     }
 
+    // Sort by rating and limit to top 10
     playerStats.sort((a, b) => b['rating'].compareTo(a['rating']));
-
     setState(() {
       leaderboardData = playerStats.take(10).toList();
     });
@@ -55,31 +53,34 @@ class _LeaderboardPageState extends State<LeaderboardPage> {
       appBar: AppBar(title: Text('Leaderboard')),
       body: leaderboardData.isEmpty
           ? Center(child: Text('No data available'))
-          : ListView.builder(
-              itemCount: leaderboardData.length,
-              itemBuilder: (context, index) {
-                final player = leaderboardData[index];
-                return Container(
-                  color: index % 2 == 0 ? Colors.grey[100] : Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '${index + 1}. ${player['name']}',
-                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          : LayoutBuilder(
+              builder: (context, constraints) {
+                return SingleChildScrollView(
+                  padding: EdgeInsets.all(16),
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(minWidth: constraints.maxWidth),
+                    child: DataTable(
+                      headingRowColor: MaterialStateProperty.resolveWith<Color?>(
+                        (Set<MaterialState> states) => Colors.grey[300],
                       ),
-                      const SizedBox(height: 4),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text('Rating: ${player['rating']}'),
-                          Text('Won: ${player['framesWon']}'),
-                          Text('Lost: ${player['framesLost']}'),
-                          Text('Max Break: ${player['maxBreak']}'),
-                        ],
-                      ),
-                    ],
+                      columnSpacing: 24,
+                      columns: const [
+                        DataColumn(label: Expanded(child: Text('Name'))),
+                        DataColumn(label: Expanded(child: Text('Rating'))),
+                        DataColumn(label: Expanded(child: Text('Frames Won'))),
+                        DataColumn(label: Expanded(child: Text('Frames Lost'))),
+                        DataColumn(label: Expanded(child: Text('Max Break'))),
+                      ],
+                      rows: leaderboardData.map((player) {
+                        return DataRow(cells: [
+                          DataCell(Text(player['name'])),
+                          DataCell(Text(player['rating'].toString())),
+                          DataCell(Text(player['framesWon'].toString())),
+                          DataCell(Text(player['framesLost'].toString())),
+                          DataCell(Text(player['maxBreak'].toString())),
+                        ]);
+                      }).toList(),
+                    ),
                   ),
                 );
               },

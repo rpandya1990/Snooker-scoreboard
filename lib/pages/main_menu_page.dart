@@ -12,11 +12,25 @@ class MainMenuPage extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             ElevatedButton(
-              child: Text('Start Match'),
+              child: Text('Rated Match'),
               onPressed: () {
                 Navigator.push(
                   context,
-                  MaterialPageRoute(builder: (_) => PlayerSelectionPage()),
+                  MaterialPageRoute(
+                    builder: (_) => PlayerSelectionPage(isPractice: false),
+                  ),
+                );
+              },
+            ),
+            SizedBox(height: 16),
+            ElevatedButton(
+              child: Text('Practice'),
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => PlayerSelectionPage(isPractice: true),
+                  ),
                 );
               },
             ),

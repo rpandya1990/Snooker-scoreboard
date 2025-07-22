@@ -42,14 +42,12 @@ class _ManagePlayersPageState extends State<ManagePlayersPage> {
       if (!playerNames.contains(newName)) {
         playerNames.add(newName);
         await prefs.setStringList('playerNames', playerNames);
-        // Initialize stats for new player
         await prefs.setInt('player_${newName}_cumulativeMaxBreak', 0);
         await prefs.setInt('player_${newName}_totalFramesWon', 0);
         await prefs.setInt('player_${newName}_totalFramesLost', 0);
         await prefs.setInt('player_${newName}_rating', 1500);
         await _loadPlayers();
       } else {
-        // Optional: Show duplicate player warning
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Player "$newName" already exists.')),
         );
@@ -65,10 +63,10 @@ class _ManagePlayersPageState extends State<ManagePlayersPage> {
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            Text('Rating: ${player.rating}'),
             Text('Max Break: ${player.maxBreak}'),
             Text('Frames Won: ${player.framesWon}'),
             Text('Frames Lost: ${player.framesLost}'),
-            Text('Rating: ${player.rating}'),
           ],
         ),
         actions: [
@@ -95,7 +93,6 @@ class _ManagePlayersPageState extends State<ManagePlayersPage> {
       final playerNames = prefs.getStringList('playerNames') ?? [];
       playerNames.remove(playerName);
       await prefs.setStringList('playerNames', playerNames);
-      // Also remove stats keys
       await prefs.remove('player_${playerName}_cumulativeMaxBreak');
       await prefs.remove('player_${playerName}_totalFramesWon');
       await prefs.remove('player_${playerName}_totalFramesLost');
@@ -104,22 +101,59 @@ class _ManagePlayersPageState extends State<ManagePlayersPage> {
     }
   }
 
+  Widget _buildActionMenu(PlayerData player) {
+    return PopupMenuButton<String>(
+      onSelected: (value) {
+        if (value == 'delete') {
+          _confirmDeletePlayer(player.name);
+        }
+      },
+      itemBuilder: (context) => [
+        PopupMenuItem<String>(
+          value: 'delete',
+          child: Text('Delete'),
+        ),
+      ],
+      icon: Icon(Icons.more_vert),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: Text('Manage Players')),
       body: players.isEmpty
           ? Center(child: Text('No players added yet. Tap + to add a player.'))
-          : ListView.builder(
-              itemCount: players.length,
-              itemBuilder: (context, index) {
-                final player = players[index];
-                return ListTile(
-                  title: Text(player.name),
-                  onTap: () => _showPlayerStats(player),
-                  trailing: IconButton(
-                    icon: Icon(Icons.delete, color: Colors.redAccent),
-                    onPressed: () => _confirmDeletePlayer(player.name),
+          : LayoutBuilder(
+              builder: (context, constraints) {
+                return SingleChildScrollView(
+                  padding: EdgeInsets.all(16),
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(minWidth: constraints.maxWidth),
+                    child: DataTable(
+                      columnSpacing: 24,
+                      headingRowColor: MaterialStateProperty.resolveWith<Color?>(
+                        (Set<MaterialState> states) => Colors.grey[300],
+                      ),
+                      columns: const [
+                        DataColumn(label: Expanded(child: Text('Player Name'))),
+                        DataColumn(label: Expanded(child: Text('Stats'))),
+                        DataColumn(label: Expanded(child: Text('Actions'))),
+                      ],
+                      rows: players.map((player) {
+                        return DataRow(cells: [
+                          DataCell(Text(player.name)),
+                          DataCell(
+                            IconButton(
+                              icon: Icon(Icons.info_outline),
+                              tooltip: 'View Stats',
+                              onPressed: () => _showPlayerStats(player),
+                            ),
+                          ),
+                          DataCell(_buildActionMenu(player)),
+                        ]);
+                      }).toList(),
+                    ),
                   ),
                 );
               },
@@ -164,8 +198,6 @@ class _AddPlayerDialogState extends State<AddPlayerDialog> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Optional: Remove or minimize this heading to save space
-              // Text('Add Player', style: Theme.of(context).textTheme.titleLarge),
               TextField(
                 controller: _controller,
                 autofocus: true,
@@ -199,4 +231,3 @@ class _AddPlayerDialogState extends State<AddPlayerDialog> {
     );
   }
 }
-
