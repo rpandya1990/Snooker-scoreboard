@@ -327,6 +327,13 @@ class PointDialog extends StatefulWidget {
 class _PointDialogState extends State<PointDialog> {
   final TextEditingController _controller = TextEditingController();
 
+  void _submit() {
+    final int? value = int.tryParse(_controller.text);
+    if (value != null) {
+      Navigator.pop(context, value);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
@@ -334,15 +341,22 @@ class _PointDialogState extends State<PointDialog> {
       content: TextField(
         controller: _controller,
         keyboardType: TextInputType.number,
-        decoration: InputDecoration(hintText: "e.g. 4 or 0"),
         autofocus: true,
+        decoration: InputDecoration(
+          hintText: "e.g. 4 or 0",
+          border: OutlineInputBorder(), // bordered box
+          contentPadding: EdgeInsets.symmetric(vertical: 12, horizontal: 12),
+        ),
+        textInputAction: TextInputAction.done,
+        onSubmitted: (_) => _submit(), // submit on Done pressed
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context, int.tryParse(_controller.text)),
-          child: Text('OK'),
-        )
-      ],
+      // No actions (OK button removed)
     );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
   }
 }
