@@ -23,9 +23,31 @@ class ScoreboardPage extends StatefulWidget {
   _ScoreboardPageState createState() => _ScoreboardPageState();
 }
 
+class _ScoreAction {
+  final Player player;
+  final int previousScore;
+  final int previousMaxBreakFrame;
+  final int previousMaxBreakSession;
+  final int previousCumulativeMaxBreak;
+  final List<int> previousLastBreaks;
+
+  _ScoreAction({
+    required this.player,
+    required this.previousScore,
+    required this.previousMaxBreakFrame,
+    required this.previousMaxBreakSession,
+    required this.previousCumulativeMaxBreak,
+    required this.previousLastBreaks,
+  });
+}
+
+
 class _ScoreboardPageState extends State<ScoreboardPage> {
   late Player player1;
   late Player player2;
+
+  // History for undo: last score change only
+  final List<_ScoreAction> _history = [];
 
   @override
   void initState() {
@@ -74,14 +96,61 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
     await _audioPlayer.play(AssetSource('sounds/frame_end.mp3'));
     setState(() {
       _updatePlayerFrameStats();
+
+      _history.clear();
+
       player1.score = 0;
       player2.score = 0;
       player1.maxBreakFrame = 0;
       player2.maxBreakFrame = 0;
+
+      player1.lastBreaks.clear();
+      player2.lastBreaks.clear();
+
       player1.cancelPendingTimers();
       player2.cancelPendingTimers();
     });
   }
+
+  void _pushHistory(Player player) {
+    _history.add(
+      _ScoreAction(
+        player: player,
+        previousScore: player.score,
+        previousMaxBreakFrame: player.maxBreakFrame,
+        previousMaxBreakSession: player.maxBreakSession,
+        previousCumulativeMaxBreak: player.cumulativeMaxBreak,
+        previousLastBreaks: List<int>.from(player.lastBreaks),
+      ),
+    );
+  }
+
+  void _undoLastActionFor(Player player) {
+    if (_history.isEmpty) return;
+
+    // Find the last action for this specific player
+    final actionIndex = _history.lastIndexWhere((a) => a.player == player);
+    if (actionIndex == -1) {
+      return; // no history for this player
+    }
+
+    final last = _history.removeAt(actionIndex);
+
+    setState(() {
+      last.player.score = last.previousScore;
+      last.player.maxBreakFrame = last.previousMaxBreakFrame;
+      last.player.maxBreakSession = last.previousMaxBreakSession;
+      last.player.cumulativeMaxBreak = last.previousCumulativeMaxBreak;
+
+      last.player.lastBreaks
+        ..clear()
+        ..addAll(last.previousLastBreaks);
+
+      // Also cancel any blinking/timers for this player
+      last.player.cancelPendingTimers();
+    });
+  }
+
 
   void _updatePlayerFrameStats() async {
     final breakWinner = player1.maxBreakFrame > player2.maxBreakFrame ? player1 : player2;
@@ -140,16 +209,23 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
 
   void resetAll() {
     setState(() {
+      _history.clear();
+
       player1.score = 0;
       player2.score = 0;
       player1.maxBreakFrame = 0;
       player2.maxBreakFrame = 0;
       player1.maxBreakSession = 0;
       player2.maxBreakSession = 0;
+
+      player1.lastBreaks.clear();
+      player2.lastBreaks.clear();
+
       player1.cancelPendingTimers();
       player2.cancelPendingTimers();
     });
   }
+
 
   void openScoreInput(Player player, bool isUpdate) async {
     final points = await showModalBottomSheet<int>(
@@ -159,6 +235,8 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
     );
     if (points != null) {
       setState(() {
+        _pushHistory(player);
+
         if (!isUpdate) {
           player.setScoreWithBreak(points, isUpdate, () => setState(() {}));
         } else {
@@ -252,6 +330,10 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
                         icon: Icon(Icons.add, color: Colors.greenAccent),
                         onPressed: () {
                           setState(() {
+                            // Only record history at the *start* of a break
+                            if (!player.hasPendingBreak) {
+                              _pushHistory(player);
+                            }
                             player.updateScoreByButton(1, () => setState(() {}));
                           });
                         },
@@ -261,6 +343,7 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
                         icon: Icon(Icons.remove, color: Colors.redAccent),
                         onPressed: () {
                           setState(() {
+                            _pushHistory(player);
                             player.updateScoreByButton(-1, () => setState(() {}));
                           });
                         },
@@ -269,6 +352,15 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
                         iconSize: iconSize,
                         icon: Icon(Icons.edit, color: Colors.tealAccent),
                         onPressed: () => openScoreInput(player, false),
+                      ),
+                      IconButton(
+                          iconSize: iconSize,
+                          icon: Icon(Icons.undo, color: Colors.amberAccent),
+                          // Disable if no history for this player
+                          onPressed: _history.any((a) => a.player == player)
+                              ? () => _undoLastActionFor(player)
+                              : null,
+                          tooltip: 'Undo last for ${player.name}',
                       ),
                     ],
                   ),
@@ -280,9 +372,6 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
       }).toList(),
     );
   }
-
-
-
 
   @override
   Widget build(BuildContext context) {

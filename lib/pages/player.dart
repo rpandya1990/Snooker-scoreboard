@@ -6,6 +6,8 @@ class Player {
   final int id;
   final String name;
 
+  bool get hasPendingBreak => _pendingAddStartScore != null;
+  List<int> lastBreaks = [];
   int score = 0;
   int matchWins = 0;
   int maxBreakFrame = 0;
@@ -68,6 +70,9 @@ class Player {
         maxBreakSession = maxBreakFrame;
       }
     }
+    // Track this break
+    _recordBreak(breakPoints);
+
     _pendingAddStartScore = null;
     _addTimer?.cancel();
     _addTimer = null;
@@ -103,6 +108,10 @@ class Player {
         maxBreakSession = maxBreakFrame;
       }
     }
+
+    // Track this break
+    _recordBreak(pointsAdded);
+
     updateUI();
   }
 
@@ -116,6 +125,15 @@ class Player {
     }
     updateUI();
   }
+
+  void _recordBreak(int points) {
+      if (points <= 0) return;
+      lastBreaks.add(points);
+      if (lastBreaks.length > 3) {
+        // Keep only the last 3
+        lastBreaks.removeAt(0);
+      }
+    }
 
   void cancelPendingTimers() {
     _addTimer?.cancel();
