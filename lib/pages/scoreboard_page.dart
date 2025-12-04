@@ -311,6 +311,25 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
                       ),
                     ),
                   ),
+                  SizedBox(height: padding * 0.3),
+                  Builder(
+                    builder: (_) {
+                      // newest first, max 3
+                      final recentBreaks = player.lastBreaks.reversed.take(3).toList();
+                      final text = recentBreaks.isEmpty
+                          ? "Last breaks: –"
+                          : "Last breaks: ${recentBreaks.join(", ")}";
+
+                      return Text(
+                        text,
+                        style: TextStyle(
+                          fontSize: labelFontSize * 0.9,
+                          color: Colors.white70,
+                        ),
+                        textAlign: TextAlign.center,
+                      );
+                    },
+                  ),
                   SizedBox(height: padding * 0.5),
                   Text(
                     "Break: ${player.maxBreakFrame} (${player.maxBreakSession}), Overall: ${player.cumulativeMaxBreak}",
