@@ -14,6 +14,8 @@ class PlayerSelectionPage extends StatefulWidget {
 class _PlayerSelectionPageState extends State<PlayerSelectionPage> {
   List<String> players = [];
   Set<String> selectedPlayers = {};
+  TextEditingController _searchController = TextEditingController();
+  String _searchText = '';
 
   @override
   void initState() {
@@ -21,12 +23,17 @@ class _PlayerSelectionPageState extends State<PlayerSelectionPage> {
     _loadPlayers();
   }
 
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
   Future<void> _loadPlayers() async {
     final prefs = await SharedPreferences.getInstance();
     final savedPlayers = prefs.getStringList('playerNames') ?? [];
     setState(() {
       players = savedPlayers;
-      // Preselect first two if available
       if (savedPlayers.length >= 2) {
         selectedPlayers = savedPlayers.take(2).toSet();
       } else {
@@ -35,20 +42,45 @@ class _PlayerSelectionPageState extends State<PlayerSelectionPage> {
     });
   }
 
+  List<String> get _filteredPlayers {
+    final query = _searchText.trim().toLowerCase();
+    if (query.isEmpty) return players;
+    return players.where((player) => player.toLowerCase().contains(query)).toList();
+  }
+
+  void _resetSelection() {
+    setState(() {
+      selectedPlayers.clear();
+      if (players.length >= 2) {
+        selectedPlayers.addAll(players.take(2));
+      } else {
+        selectedPlayers.addAll(players);
+      }
+    });
+  }
+
   void _onPlayerTap(String playerName) {
     setState(() {
       if (selectedPlayers.contains(playerName)) {
         selectedPlayers.remove(playerName);
-      } else {
-        if (selectedPlayers.length < 2) {
-          selectedPlayers.add(playerName);
-        } else {
-          // Optionally show a message that only 2 players can be selected
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('You can select only 2 players')),
-          );
-        }
+        return;
       }
+
+      if (selectedPlayers.length < 2) {
+        selectedPlayers.add(playerName);
+        return;
+      }
+
+      final firstSelected = selectedPlayers.toList().first;
+      selectedPlayers.remove(firstSelected);
+      selectedPlayers.add(playerName);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Selected $playerName and replaced $firstSelected'),
+          duration: Duration(seconds: 1),
+        ),
+      );
     });
   }
 
@@ -74,6 +106,9 @@ class _PlayerSelectionPageState extends State<PlayerSelectionPage> {
 
   @override
   Widget build(BuildContext context) {
+    final selectedList = selectedPlayers.toList();
+    final filteredPlayers = _filteredPlayers;
+
     return Scaffold(
       appBar: AppBar(
         title: Text('Select Players'),
@@ -89,22 +124,69 @@ class _PlayerSelectionPageState extends State<PlayerSelectionPage> {
                     'Select exactly 2 players:',
                     style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                   ),
-                  SizedBox(height: 12),
-                  Expanded(
-                    child: ListView.builder(
-                      itemCount: players.length,
-                      itemBuilder: (context, index) {
-                        final player = players[index];
-                        final selected = selectedPlayers.contains(player);
-                        return ListTile(
-                          title: Text(player),
-                          trailing: selected
-                              ? Icon(Icons.check_box, color: Colors.teal)
-                              : Icon(Icons.check_box_outline_blank),
-                          onTap: () => _onPlayerTap(player),
+                  SizedBox(height: 8),
+                  if (selectedList.isNotEmpty)
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: selectedList.map((player) {
+                        return InputChip(
+                          label: Text(player),
+                          selected: true,
+                          onSelected: (_) => _onPlayerTap(player),
+                          avatar: Icon(Icons.person),
                         );
-                      },
+                      }).toList(),
                     ),
+                  SizedBox(height: 12),
+                  TextField(
+                    controller: _searchController,
+                    decoration: InputDecoration(
+                      hintText: 'Search players',
+                      prefixIcon: Icon(Icons.search),
+                      border: OutlineInputBorder(),
+                      suffixIcon: _searchText.isNotEmpty
+                          ? IconButton(
+                              icon: Icon(Icons.clear),
+                              onPressed: () {
+                                _searchController.clear();
+                                setState(() => _searchText = '');
+                              },
+                            )
+                          : null,
+                    ),
+                    onChanged: (value) => setState(() => _searchText = value),
+                  ),
+                  SizedBox(height: 12),
+                  Row(
+                    children: [
+                      TextButton.icon(
+                        onPressed: _resetSelection,
+                        icon: Icon(Icons.refresh),
+                        label: Text('Reset'),
+                      ),
+                      Spacer(),
+                      Text('${selectedPlayers.length}/2 selected'),
+                    ],
+                  ),
+                  SizedBox(height: 8),
+                  Expanded(
+                    child: filteredPlayers.isEmpty
+                        ? Center(child: Text('No players match your search'))
+                        : ListView.builder(
+                            itemCount: filteredPlayers.length,
+                            itemBuilder: (context, index) {
+                              final player = filteredPlayers[index];
+                              final selected = selectedPlayers.contains(player);
+                              return ListTile(
+                                title: Text(player),
+                                trailing: selected
+                                    ? Icon(Icons.check_box, color: Colors.teal)
+                                    : Icon(Icons.check_box_outline_blank),
+                                onTap: () => _onPlayerTap(player),
+                              );
+                            },
+                          ),
                   ),
                   SizedBox(height: 16),
                   Center(

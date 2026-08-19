@@ -354,6 +354,59 @@ class _ManagePlayersPageState extends State<ManagePlayersPage> {
     );
   }
 
+  Future<void> _updatePlayerMaxBreak(PlayerData player) async {
+    final controller = TextEditingController(text: player.maxBreak.toString());
+    final result = await showDialog<int>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Update Max Break for ${player.name}'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(
+            labelText: 'Max break',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final value = int.tryParse(controller.text.trim());
+              if (value == null || value < 0) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Please enter a valid non-negative number.')),
+                );
+                return;
+              }
+              Navigator.pop(context, value);
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+
+    if (result == null) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('player_${player.name}_cumulativeMaxBreak', result);
+
+    setState(() {
+      players = [
+        for (final current in players)
+          if (current.name == player.name)
+            PlayerData(current.name, result, current.framesWon, current.framesLost, current.rating)
+          else
+            current,
+      ];
+    });
+  }
+
   void _confirmDeletePlayer(String playerName) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -382,11 +435,17 @@ class _ManagePlayersPageState extends State<ManagePlayersPage> {
   Widget _buildActionMenu(PlayerData player) {
     return PopupMenuButton<String>(
       onSelected: (value) {
-        if (value == 'delete') {
+        if (value == 'update_max_break') {
+          _updatePlayerMaxBreak(player);
+        } else if (value == 'delete') {
           _confirmDeletePlayer(player.name);
         }
       },
       itemBuilder: (context) => [
+        PopupMenuItem<String>(
+          value: 'update_max_break',
+          child: Text('Update Max Break'),
+        ),
         PopupMenuItem<String>(
           value: 'delete',
           child: Text('Delete'),

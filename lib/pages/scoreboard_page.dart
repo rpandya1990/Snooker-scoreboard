@@ -92,7 +92,47 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
         false;
   }
 
-  void startNewFrame() async {
+  Future<void> _confirmEndFrameAndStartNew() async {
+    final frameWinner = player1.score > player2.score
+        ? player1.name
+        : player2.score > player1.score
+            ? player2.name
+            : 'Draw';
+
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('End frame and start new?'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Please confirm the frame summary before starting a new one.'),
+            const SizedBox(height: 12),
+            Text('${player1.name}: ${player1.score}'),
+            Text('${player2.name}: ${player2.score}'),
+            const SizedBox(height: 8),
+            Text('${player1.name} max break: ${player1.maxBreakFrame}'),
+            Text('${player2.name} max break: ${player2.maxBreakFrame}'),
+            const SizedBox(height: 8),
+            Text('Frame winner: $frameWinner'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Confirm'),
+          ),
+        ],
+      ),
+    );
+
+    if (result != true) return;
+
     await _audioPlayer.play(AssetSource('sounds/frame_end.mp3'));
     setState(() {
       _updatePlayerFrameStats();
@@ -110,6 +150,32 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
       player1.cancelPendingTimers();
       player2.cancelPendingTimers();
     });
+  }
+
+  Future<void> _confirmFinishSession() async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Finish session?'),
+        content: const Text(
+          'Return to the main menu? The current session will end here.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Finish'),
+          ),
+        ],
+      ),
+    );
+
+    if (result == true) {
+      Navigator.of(context).pop();
+    }
   }
 
   void _pushHistory(Player player) {
@@ -405,13 +471,21 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
               children: [
                 mergedScoreCard(player1, player2),
                 SizedBox(height: 10),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                Wrap(
+                  alignment: WrapAlignment.center,
+                  spacing: 10,
+                  runSpacing: 10,
                   children: [
                     ElevatedButton(
-                      onPressed: startNewFrame,
+                      onPressed: _confirmEndFrameAndStartNew,
                       child: Text("End Frame & Start New"),
                     ),
+                    if (!widget.isPractice)
+                      ElevatedButton.icon(
+                        onPressed: _confirmFinishSession,
+                        icon: const Icon(Icons.exit_to_app),
+                        label: const Text("Finish Session"),
+                      ),
                     ElevatedButton(
                       onPressed: resetAll,
                       child: Text("Reset"),

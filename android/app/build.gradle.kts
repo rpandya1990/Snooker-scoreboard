@@ -29,11 +29,20 @@ android {
     }
 
     signingConfigs {
-        create("release") {
-            keyAlias = keystoreProperties["keyAlias"] as String?
-            keyPassword = keystoreProperties["keyPassword"] as String?
-            storeFile = file(keystoreProperties["storeFile"] as String)
-            storePassword = keystoreProperties["storePassword"] as String?
+        if (keystorePropertiesFile.exists()) {
+            create("release") {
+                val keyAliasValue = keystoreProperties["keyAlias"] as String?
+                val keyPasswordValue = keystoreProperties["keyPassword"] as String?
+                val storeFileValue = keystoreProperties["storeFile"] as String?
+                val storePasswordValue = keystoreProperties["storePassword"] as String?
+
+                if (keyAliasValue != null && keyPasswordValue != null && storeFileValue != null && storePasswordValue != null) {
+                    keyAlias = keyAliasValue
+                    keyPassword = keyPasswordValue
+                    storeFile = file(storeFileValue)
+                    storePassword = storePasswordValue
+                }
+            }
         }
     }
 
@@ -50,7 +59,7 @@ android {
 
     buildTypes {
         getByName("release") {
-            signingConfig = signingConfigs.getByName("release")
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
             isMinifyEnabled = false
             isShrinkResources = false
             proguardFiles(
