@@ -315,185 +315,217 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
   Widget mergedScoreCard(Player p1, Player p2) {
     final screenWidth = MediaQuery.of(context).size.width;
     final screenHeight = MediaQuery.of(context).size.height;
-    final isTablet = screenWidth > 600;
+    final isLandscape = screenWidth > screenHeight;
+    final isTablet = screenWidth > 700;
 
-    // Scale factors
-    double tabletScale = 0.65;
-    double phoneScale = 0.4;
+    Widget buildPlayerCard(Player player) {
+      final recentBreaks = player.lastBreaks.reversed.take(3).toList();
+      final breakText = recentBreaks.isEmpty
+          ? 'Last breaks: –'
+          : 'Last breaks: ${recentBreaks.join(', ')}';
 
-    // Dynamic sizes with scale factors
-    double nameFontSize = isTablet
-        ? screenWidth * 0.045 * tabletScale
-        : screenWidth * 0.025 * phoneScale;
-    double scoreFontSize = isTablet
-        ? screenWidth * 0.12 * tabletScale
-        : screenWidth * 0.04 * phoneScale;
-    double labelFontSize = isTablet
-        ? screenWidth * 0.035 * tabletScale
-        : screenWidth * 0.015 * phoneScale;
-    double iconSize = isTablet
-        ? screenWidth * 0.06 * tabletScale
-        : screenWidth * 0.025 * phoneScale;
-    double padding = isTablet
-        ? screenWidth * 0.03 * tabletScale
-        : screenWidth * 0.0075 * phoneScale;
+      final cardPadding = isTablet ? 14.0 : 12.0;
+      final titleSize = isTablet ? 28.0 : 24.0;
+      final scoreSize = isTablet ? 68.0 : 54.0;
+      final metaSize = isTablet ? 17.0 : 14.0;
+      final iconSize = isTablet ? 32.0 : 28.0;
+      final cardMinHeight = isLandscape ? 260.0 : 220.0;
 
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-      children: [p1, p2].map((player) {
-        return Expanded(
-          child: Card(
-            color: Colors.grey[900],
-            margin: EdgeInsets.all(padding),
-            child: Padding(
-              padding: EdgeInsets.symmetric(
-                vertical: padding * 1.2,
-                horizontal: padding,
+      final content = Padding(
+        padding: EdgeInsets.all(cardPadding),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              '${player.name} (${player.rating})',
+              style: TextStyle(
+                fontSize: titleSize,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
               ),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
-                    '${player.name} (${player.rating})',
-                    style: TextStyle(
-                      fontSize: nameFontSize,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                    ),
-                    textAlign: TextAlign.center,
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 8),
+            GestureDetector(
+              onTap: () => openScoreInput(player, true),
+              child: Opacity(
+                opacity: player.showScore ? 1.0 : 0.0,
+                child: Text(
+                  '${player.score}(${player.matchWins})',
+                  style: TextStyle(
+                    fontSize: scoreSize,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
                   ),
-                  SizedBox(height: padding * 0.5),
-                  GestureDetector(
-                    onTap: () => openScoreInput(player, true),
-                    child: Opacity(
-                      opacity: player.showScore ? 1.0 : 0.0,
-                      child: Text(
-                        '${player.score}(${player.matchWins})',
-                        style: TextStyle(
-                          fontSize: scoreFontSize,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                  ),
-                  SizedBox(height: padding * 0.3),
-                  Builder(
-                    builder: (_) {
-                      // newest first, max 3
-                      final recentBreaks = player.lastBreaks.reversed.take(3).toList();
-                      final text = recentBreaks.isEmpty
-                          ? "Last breaks: –"
-                          : "Last breaks: ${recentBreaks.join(", ")}";
-
-                      return Text(
-                        text,
-                        style: TextStyle(
-                          fontSize: labelFontSize * 0.9,
-                          color: Colors.white70,
-                        ),
-                        textAlign: TextAlign.center,
-                      );
-                    },
-                  ),
-                  SizedBox(height: padding * 0.5),
-                  Text(
-                    "Break: ${player.maxBreakFrame} (${player.maxBreakSession}), Overall: ${player.cumulativeMaxBreak}",
-                    style: TextStyle(
-                      fontSize: labelFontSize,
-                      color: Colors.orangeAccent,
-                      fontWeight: FontWeight.w600,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  SizedBox(height: padding * 0.5),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      IconButton(
-                        iconSize: iconSize,
-                        icon: Icon(Icons.add, color: Colors.greenAccent),
-                        onPressed: () {
-                          setState(() {
-                            // Only record history at the *start* of a break
-                            if (!player.hasPendingBreak) {
-                              _pushHistory(player);
-                            }
-                            player.updateScoreByButton(1, () => setState(() {}));
-                          });
-                        },
-                      ),
-                      IconButton(
-                        iconSize: iconSize,
-                        icon: Icon(Icons.remove, color: Colors.redAccent),
-                        onPressed: () {
-                          setState(() {
-                            _pushHistory(player);
-                            player.updateScoreByButton(-1, () => setState(() {}));
-                          });
-                        },
-                      ),
-                      IconButton(
-                        iconSize: iconSize,
-                        icon: Icon(Icons.edit, color: Colors.tealAccent),
-                        onPressed: () => openScoreInput(player, false),
-                      ),
-                      IconButton(
-                          iconSize: iconSize,
-                          icon: Icon(Icons.undo, color: Colors.amberAccent),
-                          // Disable if no history for this player
-                          onPressed: _history.any((a) => a.player == player)
-                              ? () => _undoLastActionFor(player)
-                              : null,
-                          tooltip: 'Undo last for ${player.name}',
-                      ),
-                    ],
-                  ),
-                ],
+                ),
               ),
             ),
+            const SizedBox(height: 8),
+            Text(
+              breakText,
+              style: TextStyle(
+                fontSize: metaSize,
+                color: Colors.white70,
+              ),
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Break: ${player.maxBreakFrame} (${player.maxBreakSession}), Overall: ${player.cumulativeMaxBreak}',
+              style: TextStyle(
+                fontSize: metaSize,
+                color: Colors.orangeAccent,
+                fontWeight: FontWeight.w600,
+              ),
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 8,
+              runSpacing: 6,
+              children: [
+                IconButton(
+                  iconSize: iconSize,
+                  icon: const Icon(Icons.add, color: Colors.greenAccent),
+                  onPressed: () {
+                    setState(() {
+                      if (!player.hasPendingBreak) {
+                        _pushHistory(player);
+                      }
+                      player.updateScoreByButton(1, () => setState(() {}));
+                    });
+                  },
+                ),
+                IconButton(
+                  iconSize: iconSize,
+                  icon: const Icon(Icons.remove, color: Colors.redAccent),
+                  onPressed: () {
+                    setState(() {
+                      _pushHistory(player);
+                      player.updateScoreByButton(-1, () => setState(() {}));
+                    });
+                  },
+                ),
+                IconButton(
+                  iconSize: iconSize,
+                  icon: const Icon(Icons.edit, color: Colors.tealAccent),
+                  onPressed: () => openScoreInput(player, false),
+                ),
+                IconButton(
+                  iconSize: iconSize,
+                  icon: const Icon(Icons.undo, color: Colors.amberAccent),
+                  onPressed: _history.any((a) => a.player == player)
+                      ? () => _undoLastActionFor(player)
+                      : null,
+                  tooltip: 'Undo last for ${player.name}',
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+
+      return ConstrainedBox(
+        constraints: BoxConstraints(minHeight: cardMinHeight),
+        child: SizedBox(
+          width: isLandscape ? null : double.infinity,
+          child: Card(
+            color: Colors.grey[900],
+            margin: EdgeInsets.all(isLandscape ? 8 : 6),
+            child: content,
           ),
-        );
-      }).toList(),
+        ),
+      );
+    }
+
+    if (!isLandscape) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(width: double.infinity, child: buildPlayerCard(p1)),
+          SizedBox(width: double.infinity, child: buildPlayerCard(p2)),
+        ],
+      );
+    }
+
+    if (screenWidth < 760) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(width: double.infinity, child: buildPlayerCard(p1)),
+          SizedBox(width: double.infinity, child: buildPlayerCard(p2)),
+        ],
+      );
+    }
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(child: buildPlayerCard(p1)),
+        Expanded(child: buildPlayerCard(p2)),
+      ],
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final isLandscape = MediaQuery.of(context).size.width > MediaQuery.of(context).size.height;
+    final canEndFrame = player1.score != player2.score;
+
     return WillPopScope(
       onWillPop: _onWillPop,
       child: Scaffold(
         backgroundColor: Colors.black,
         body: SafeArea(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              children: [
-                mergedScoreCard(player1, player2),
-                SizedBox(height: 10),
-                Wrap(
-                  alignment: WrapAlignment.center,
-                  spacing: 10,
-                  runSpacing: 10,
-                  children: [
-                    ElevatedButton(
-                      onPressed: _confirmEndFrameAndStartNew,
-                      child: Text("End Frame & Start New"),
-                    ),
-                    if (!widget.isPractice)
-                      ElevatedButton.icon(
-                        onPressed: _confirmFinishSession,
-                        icon: const Icon(Icons.exit_to_app),
-                        label: const Text("Finish Session"),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              return SingleChildScrollView(
+                padding: EdgeInsets.all(isLandscape ? 12 : 16),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                  child: Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 1400),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          mergedScoreCard(player1, player2),
+                          const SizedBox(height: 12),
+                          Wrap(
+                            alignment: WrapAlignment.center,
+                            spacing: 10,
+                            runSpacing: 10,
+                            children: [
+                              ElevatedButton(
+                                onPressed: canEndFrame ? _confirmEndFrameAndStartNew : null,
+                                child: const Text('End Frame & Start New'),
+                              ),
+                              if (!widget.isPractice)
+                                ElevatedButton.icon(
+                                  onPressed: _confirmFinishSession,
+                                  icon: const Icon(Icons.exit_to_app),
+                                  label: const Text('Finish Session'),
+                                ),
+                              ElevatedButton(
+                                onPressed: resetAll,
+                                child: const Text('Reset'),
+                              ),
+                            ],
+                          ),
+                        ],
                       ),
-                    ElevatedButton(
-                      onPressed: resetAll,
-                      child: Text("Reset"),
                     ),
-                  ],
+                  ),
                 ),
-              ],
-            ),
+              );
+            },
           ),
         ),
       ),

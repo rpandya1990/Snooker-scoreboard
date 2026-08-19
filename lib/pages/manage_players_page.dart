@@ -314,23 +314,33 @@ class _ManagePlayersPageState extends State<ManagePlayersPage> {
       context: context,
       builder: (context) => AddPlayerDialog(),
     );
-    if (newName != null && newName.trim().isNotEmpty) {
-      final prefs = await SharedPreferences.getInstance();
-      final playerNames = prefs.getStringList('playerNames') ?? [];
-      if (!playerNames.contains(newName)) {
-        playerNames.add(newName);
-        await prefs.setStringList('playerNames', playerNames);
-        await prefs.setInt('player_${newName}_cumulativeMaxBreak', 0);
-        await prefs.setInt('player_${newName}_totalFramesWon', 0);
-        await prefs.setInt('player_${newName}_totalFramesLost', 0);
-        await prefs.setInt('player_${newName}_rating', 1500);
-        await _loadPlayers();
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Player "$newName" already exists.')),
-        );
-      }
+    if (newName == null) return;
+
+    final trimmedName = newName.trim();
+    if (trimmedName.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Player name cannot be empty.')),
+      );
+      return;
     }
+
+    final prefs = await SharedPreferences.getInstance();
+    final playerNames = prefs.getStringList('playerNames') ?? [];
+    final normalizedExisting = playerNames.map((name) => name.trim()).toList();
+    if (normalizedExisting.contains(trimmedName)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Player "$trimmedName" already exists.')),
+      );
+      return;
+    }
+
+    playerNames.add(trimmedName);
+    await prefs.setStringList('playerNames', playerNames);
+    await prefs.setInt('player_${trimmedName}_cumulativeMaxBreak', 0);
+    await prefs.setInt('player_${trimmedName}_totalFramesWon', 0);
+    await prefs.setInt('player_${trimmedName}_totalFramesLost', 0);
+    await prefs.setInt('player_${trimmedName}_rating', 1500);
+    await _loadPlayers();
   }
 
   void _showPlayerStats(PlayerData player) {
@@ -574,7 +584,13 @@ class _AddPlayerDialogState extends State<AddPlayerDialog> {
           padding: const EdgeInsets.all(16.0),
           child: Column(
             mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              Text(
+                'Add player',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              SizedBox(height: 12),
               TextField(
                 controller: _controller,
                 autofocus: true,
@@ -595,7 +611,25 @@ class _AddPlayerDialogState extends State<AddPlayerDialog> {
                   ElevatedButton(
                     onPressed: () {
                       final name = _controller.text.trim();
-                      Navigator.pop(context, name.isEmpty ? null : name);
+                      if (name.isEmpty) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Please enter a player name.')),
+                        );
+                        return;
+                      }
+
+                      final prefs = SharedPreferences.getInstance();
+                      prefs.then((value) {
+                        final playerNames = value.getStringList('playerNames') ?? [];
+                        final normalized = playerNames.map((entry) => entry.trim()).toList();
+                        if (normalized.contains(name)) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text('Player "$name" already exists.')),
+                          );
+                          return;
+                        }
+                        Navigator.pop(context, name);
+                      });
                     },
                     child: Text('Add'),
                   ),
