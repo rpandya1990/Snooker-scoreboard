@@ -101,34 +101,60 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
 
     final result = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('End frame and start new?'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Please confirm the frame summary before starting a new one.'),
-            const SizedBox(height: 12),
-            Text('${player1.name}: ${player1.score}'),
-            Text('${player2.name}: ${player2.score}'),
-            const SizedBox(height: 8),
-            Text('${player1.name} max break: ${player1.maxBreakFrame}'),
-            Text('${player2.name} max break: ${player2.maxBreakFrame}'),
-            const SizedBox(height: 8),
-            Text('Frame winner: $frameWinner'),
+      builder: (context) {
+        final media = MediaQuery.of(context);
+        final isCompactLandscape = media.size.width > media.size.height && media.size.width < 700;
+
+        return AlertDialog(
+          insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+          title: Text(
+            'End frame and start new?',
+            style: TextStyle(
+              fontSize: isCompactLandscape ? 24 : 32,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          content: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: isCompactLandscape ? 420 : 520,
+              maxHeight: media.size.height * 0.7,
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Please confirm the frame summary before starting a new one.',
+                    style: TextStyle(fontSize: isCompactLandscape ? 16 : 18),
+                  ),
+                  const SizedBox(height: 12),
+                  Text('${player1.name}: ${player1.score}'),
+                  Text('${player2.name}: ${player2.score}'),
+                  const SizedBox(height: 8),
+                  Text('${player1.name} max break: ${player1.maxBreakFrame}'),
+                  Text('${player2.name} max break: ${player2.maxBreakFrame}'),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Frame winner: $frameWinner',
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Confirm'),
+            ),
           ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Confirm'),
-          ),
-        ],
-      ),
+        );
+      },
     );
 
     if (result != true) return;
@@ -325,11 +351,23 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
           : 'Last breaks: ${recentBreaks.join(', ')}';
 
       final cardPadding = isTablet ? 14.0 : 12.0;
-      final titleSize = isTablet ? 28.0 : 24.0;
-      final scoreSize = isTablet ? 68.0 : 54.0;
-      final metaSize = isTablet ? 17.0 : 14.0;
+      final titleSize = isTablet
+          ? 28.0
+          : isLandscape
+              ? 22.0
+              : 20.0;
+      final scoreSize = isTablet
+          ? 68.0
+          : isLandscape
+              ? 52.0
+              : 48.0;
+      final metaSize = isTablet
+          ? 17.0
+          : isLandscape
+              ? 13.5
+              : 12.5;
       final iconSize = isTablet ? 32.0 : 28.0;
-      final cardMinHeight = isLandscape ? 260.0 : 220.0;
+      final cardMinHeight = isLandscape ? 250.0 : 210.0;
 
       final content = Padding(
         padding: EdgeInsets.all(cardPadding),
@@ -477,7 +515,63 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
   @override
   Widget build(BuildContext context) {
     final isLandscape = MediaQuery.of(context).size.width > MediaQuery.of(context).size.height;
+    final isPhone = MediaQuery.of(context).size.width < 600;
     final canEndFrame = player1.score != player2.score;
+
+    final endFrameButton = ElevatedButton(
+      onPressed: canEndFrame ? _confirmEndFrameAndStartNew : null,
+      child: const Text('End Frame & Start New'),
+    );
+
+    final finishSessionButton = !widget.isPractice
+        ? ElevatedButton.icon(
+            onPressed: _confirmFinishSession,
+            icon: const Icon(Icons.exit_to_app),
+            label: const Text('Finish Session'),
+          )
+        : const SizedBox.shrink();
+
+    final resetButton = ElevatedButton(
+      onPressed: resetAll,
+      child: const Text('Reset'),
+    );
+
+    final actionButtons = <Widget>[
+      endFrameButton,
+      if (!widget.isPractice) finishSessionButton,
+      resetButton,
+    ];
+
+    Widget actionLayout() {
+      if (!isPhone) {
+        return Wrap(
+          alignment: WrapAlignment.center,
+          spacing: 10,
+          runSpacing: 10,
+          children: actionButtons,
+        );
+      }
+
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              Expanded(child: endFrameButton),
+              if (!widget.isPractice) ...[
+                const SizedBox(width: 8),
+                Expanded(child: finishSessionButton),
+              ],
+            ],
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            width: 160,
+            child: resetButton,
+          ),
+        ],
+      );
+    }
 
     return WillPopScope(
       onWillPop: _onWillPop,
@@ -486,11 +580,11 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
         body: SafeArea(
           child: LayoutBuilder(
             builder: (context, constraints) {
-              return SingleChildScrollView(
+              return ListView(
                 padding: EdgeInsets.all(isLandscape ? 12 : 16),
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(minHeight: constraints.maxHeight),
-                  child: Center(
+                physics: const AlwaysScrollableScrollPhysics(),
+                children: [
+                  Center(
                     child: ConstrainedBox(
                       constraints: const BoxConstraints(maxWidth: 1400),
                       child: Column(
@@ -498,32 +592,12 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
                         children: [
                           mergedScoreCard(player1, player2),
                           const SizedBox(height: 12),
-                          Wrap(
-                            alignment: WrapAlignment.center,
-                            spacing: 10,
-                            runSpacing: 10,
-                            children: [
-                              ElevatedButton(
-                                onPressed: canEndFrame ? _confirmEndFrameAndStartNew : null,
-                                child: const Text('End Frame & Start New'),
-                              ),
-                              if (!widget.isPractice)
-                                ElevatedButton.icon(
-                                  onPressed: _confirmFinishSession,
-                                  icon: const Icon(Icons.exit_to_app),
-                                  label: const Text('Finish Session'),
-                                ),
-                              ElevatedButton(
-                                onPressed: resetAll,
-                                child: const Text('Reset'),
-                              ),
-                            ],
-                          ),
+                          actionLayout(),
                         ],
                       ),
                     ),
                   ),
-                ),
+                ],
               );
             },
           ),
