@@ -27,7 +27,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final button = tester.widget<ElevatedButton>(
-      find.widgetWithText(ElevatedButton, 'End Frame & Start New'),
+      find.widgetWithText(ElevatedButton, 'Finish Frame'),
     );
 
     expect(button.onPressed, isNull);
@@ -52,7 +52,7 @@ void main() {
     await tester.pump();
 
     final button = tester.widget<ElevatedButton>(
-      find.widgetWithText(ElevatedButton, 'End Frame & Start New'),
+      find.widgetWithText(ElevatedButton, 'Finish Frame'),
     );
 
     expect(button.onPressed, isNotNull);

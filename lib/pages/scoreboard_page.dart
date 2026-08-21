@@ -343,6 +343,7 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
     final screenHeight = MediaQuery.of(context).size.height;
     final isLandscape = screenWidth > screenHeight;
     final isTablet = screenWidth > 700;
+    final isPhoneLandscape = screenWidth >= 600 && screenWidth < 900 && isLandscape;
 
     Widget buildPlayerCard(Player player) {
       final recentBreaks = player.lastBreaks.reversed.take(3).toList();
@@ -350,24 +351,30 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
           ? 'Last breaks: –'
           : 'Last breaks: ${recentBreaks.join(', ')}';
 
-      final cardPadding = isTablet ? 14.0 : 12.0;
+      final cardPadding = isTablet ? 16.0 : (isPhoneLandscape ? 6.0 : 12.0);
       final titleSize = isTablet
-          ? 28.0
-          : isLandscape
-              ? 22.0
-              : 20.0;
+          ? (isLandscape ? 32.0 : 28.0)
+          : isPhoneLandscape
+              ? 16.0
+              : isLandscape
+                  ? 22.0
+                  : 20.0;
       final scoreSize = isTablet
-          ? 68.0
-          : isLandscape
-              ? 52.0
-              : 48.0;
+          ? (isLandscape ? 94.0 : 78.0)
+          : isPhoneLandscape
+              ? 50.0
+              : isLandscape
+                  ? 52.0
+                  : 48.0;
       final metaSize = isTablet
-          ? 17.0
-          : isLandscape
-              ? 13.5
-              : 12.5;
-      final iconSize = isTablet ? 32.0 : 28.0;
-      final cardMinHeight = isLandscape ? 250.0 : 210.0;
+          ? (isLandscape ? 19.0 : 17.0)
+          : isPhoneLandscape
+              ? 10.5
+              : isLandscape
+                  ? 13.5
+                  : 12.5;
+      final iconSize = isTablet ? 34.0 : (isPhoneLandscape ? 22.0 : 28.0);
+      final cardMinHeight = isPhoneLandscape ? 150.0 : isLandscape ? 280.0 : 210.0;
 
       final content = Padding(
         padding: EdgeInsets.all(cardPadding),
@@ -493,7 +500,7 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
       );
     }
 
-    if (screenWidth < 760) {
+    if (screenWidth < 760 && !isPhoneLandscape) {
       return Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -516,20 +523,19 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
   Widget build(BuildContext context) {
     final isLandscape = MediaQuery.of(context).size.width > MediaQuery.of(context).size.height;
     final isPhone = MediaQuery.of(context).size.width < 600;
+    final isPhoneLandscape = isPhone && isLandscape;
+    final useStackedActions = isPhone && !isLandscape;
     final canEndFrame = player1.score != player2.score;
 
     final endFrameButton = ElevatedButton(
       onPressed: canEndFrame ? _confirmEndFrameAndStartNew : null,
-      child: const Text('End Frame & Start New'),
+      child: const Text('Finish Frame'),
     );
 
-    final finishSessionButton = !widget.isPractice
-        ? ElevatedButton.icon(
-            onPressed: _confirmFinishSession,
-            icon: const Icon(Icons.exit_to_app),
-            label: const Text('Finish Session'),
-          )
-        : const SizedBox.shrink();
+    final finishSessionButton = ElevatedButton(
+      onPressed: _confirmFinishSession,
+      child: const Text('Finish Session'),
+    );
 
     final resetButton = ElevatedButton(
       onPressed: resetAll,
@@ -538,12 +544,25 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
 
     final actionButtons = <Widget>[
       endFrameButton,
-      if (!widget.isPractice) finishSessionButton,
+      if (finishSessionButton != null) finishSessionButton,
       resetButton,
     ];
 
     Widget actionLayout() {
-      if (!isPhone) {
+      if (isPhoneLandscape) {
+        return Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            SizedBox(width: 170, child: endFrameButton),
+            const SizedBox(width: 8),
+            SizedBox(width: 160, child: finishSessionButton),
+            const SizedBox(width: 8),
+            SizedBox(width: 110, child: resetButton),
+          ],
+        );
+      }
+
+      if (!useStackedActions) {
         return Wrap(
           alignment: WrapAlignment.center,
           spacing: 10,
@@ -555,20 +574,11 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
       return Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Row(
-            children: [
-              Expanded(child: endFrameButton),
-              if (!widget.isPractice) ...[
-                const SizedBox(width: 8),
-                Expanded(child: finishSessionButton),
-              ],
-            ],
-          ),
+          SizedBox(width: double.infinity, child: endFrameButton),
           const SizedBox(height: 8),
-          SizedBox(
-            width: 160,
-            child: resetButton,
-          ),
+          SizedBox(width: double.infinity, child: finishSessionButton),
+          const SizedBox(height: 8),
+          SizedBox(width: double.infinity, child: resetButton),
         ],
       );
     }
@@ -577,31 +587,52 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
       onWillPop: _onWillPop,
       child: Scaffold(
         backgroundColor: Colors.black,
-        body: SafeArea(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              return ListView(
-                padding: EdgeInsets.all(isLandscape ? 12 : 16),
-                physics: const AlwaysScrollableScrollPhysics(),
-                children: [
-                  Center(
+        body: isPhoneLandscape
+            ? SafeArea(
+                top: false,
+                bottom: false,
+                child: Center(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 0),
                     child: ConstrainedBox(
                       constraints: const BoxConstraints(maxWidth: 1400),
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           mergedScoreCard(player1, player2),
-                          const SizedBox(height: 12),
+                          const SizedBox(height: 2),
                           actionLayout(),
                         ],
                       ),
                     ),
                   ),
-                ],
-              );
-            },
-          ),
-        ),
+                ),
+              )
+            : SafeArea(
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    return ListView(
+                      padding: EdgeInsets.all(isLandscape ? 12 : 16),
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      children: [
+                        Center(
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 1400),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                mergedScoreCard(player1, player2),
+                                const SizedBox(height: 12),
+                                actionLayout(),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+              ),
       ),
     );
   }

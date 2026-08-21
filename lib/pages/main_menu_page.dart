@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'player_selection_page.dart';
 import 'manage_players_page.dart';
 import 'leaderboard_page.dart';
@@ -23,6 +24,14 @@ class MainMenuPage extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            SizedBox(
+              width: screenWidth * 0.11,
+              child: SvgPicture.asset(
+                'assets/pictures/app-logo.svg',
+                fit: BoxFit.contain,
+              ),
+            ),
+            SizedBox(height: verticalSpacing * 1.5),
             _buildMenuButton(
               context,
               text: 'Rated Match',
