@@ -5,6 +5,30 @@ import 'package:snooker_scoreboard/main.dart';
 import 'package:snooker_scoreboard/pages/scoreboard_page.dart';
 
 void main() {
+  testWidgets('scoreboard uses more available width on large landscape screens', (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1600, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(() => tester.view.resetPhysicalSize());
+
+    await tester.pumpWidget(
+      const MediaQuery(
+        data: MediaQueryData(size: Size(1600, 900)),
+        child: MaterialApp(
+          home: ScoreboardPage(
+            player1Name: 'Raghav',
+            player2Name: 'Carkey',
+          ),
+        ),
+      ),
+    );
+
+    final largeLandscapeConstraint = tester.widgetList<ConstrainedBox>(find.byType(ConstrainedBox)).any(
+      (box) => box.constraints.maxWidth > 1400,
+    );
+
+    expect(largeLandscapeConstraint, isTrue);
+  });
+
   testWidgets('app loads and shows main menu options', (WidgetTester tester) async {
     await tester.pumpWidget(SnookerScoreboardApp());
 
