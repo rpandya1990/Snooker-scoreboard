@@ -53,3 +53,15 @@ app.*.map.json
 /android/*.jks
 /android/key.properties
 /android/app/upload-keystore.jks
+
+# Camera companion: local environments, secrets, and collected data
+companion/.venv/
+companion/build/
+companion/dist/
+companion/.env
+companion/.env.*
+!companion/.env.example
+companion/data/
+companion/.pytest_cache/
+**/__pycache__/
+**/*.egg-info/

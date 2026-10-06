@@ -2,6 +2,27 @@
 
 A Flutter app for tracking snooker scores, managing players, and viewing leaderboards. The app is optimized for a landscape tablet layout and includes local player storage, leaderboard rankings, and sound effects.
 
+## AI scoring foundation
+
+The optional integration lives in `lib/ai_scoring/`, with an independent Python package in [companion/](companion/README.md). Default mode is `off`; `dry-run` records comparisons without AI controls, and `assist` exposes an optional editable suggestion in additive score entry.
+
+**Local vision integration is experimental.** An opt-in Ollama adapter now supports recorded replay and live observation; see [Local vision scoring](docs/local-vision-scoring.md). Default-off mode, strict calibration/time/coverage gates and model latency can leave predictions unavailable. Session recording and dataset tools are available in [Record your next game](docs/record-your-next-game.md). Real-camera accuracy and production readiness are unverified.
+
+See the [approved PRD](docs/ai-break-scoring-prd.md), [design](docs/ai-break-scoring-design.md), [implementation plan](docs/ai-break-scoring-plan.md), and [validation status](docs/ai-break-scoring-validation.md).
+
+For integration testing, use a private, untracked Dart configuration file with these keys:
+
+```json
+{
+  "AI_SCORING_MODE": "dry-run",
+  "AI_SCORING_ENDPOINT": "https://companion-host:8443",
+  "AI_SCORING_CAMERA_ALIAS": "table",
+  "AI_SCORING_TOKEN": "<PAIRING_TOKEN>"
+}
+```
+
+Run `flutter run --dart-define-from-file=/absolute/path/to/private-config.json`. Use a companion certificate trusted by the device, and matching pairing credentials in the service's protected environment. Camera credentials stay service-side and do not belong in this app configuration. For optional suggestions, choose `assist` on both app and companion; the app still needs an available visual prediction. See the companion README for startup, JSON storage and review commands.
+
 ## Requirements
 
 Before setting up the project, install:

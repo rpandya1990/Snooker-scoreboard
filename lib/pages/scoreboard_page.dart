@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'player.dart';
+import '../ai_scoring/coordinator.dart';
+import '../ai_scoring/client.dart';
 
 final AudioPlayer _audioPlayer = AudioPlayer();
 
@@ -11,11 +13,13 @@ class ScoreboardPage extends StatefulWidget {
   final String player1Name;
   final String player2Name;
   final bool isPractice;
+  final AiCoordinator? observer;
 
   const ScoreboardPage({
     required this.player1Name,
     required this.player2Name,
     this.isPractice = false,
+    this.observer,
     Key? key,
   }) : super(key: key);
 
@@ -25,6 +29,8 @@ class ScoreboardPage extends StatefulWidget {
 
 class _ScoreAction {
   final Player player;
+  final String? entryId;
+  final bool startsGroup;
   final int previousScore;
   final int previousMaxBreakFrame;
   final int previousMaxBreakSession;
@@ -33,6 +39,8 @@ class _ScoreAction {
 
   _ScoreAction({
     required this.player,
+    this.entryId,
+    this.startsGroup = false,
     required this.previousScore,
     required this.previousMaxBreakFrame,
     required this.previousMaxBreakSession,
@@ -41,8 +49,11 @@ class _ScoreAction {
   });
 }
 
-
 class _ScoreboardPageState extends State<ScoreboardPage> {
+  late AiCoordinator _observer;
+  final Map<Player, InputAttempt> _groups = {};
+  final Map<Player, int> _groupStart = {};
+  final Map<Player, String> _lastEntry = {};
   late Player player1;
   late Player player2;
 
@@ -54,6 +65,10 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
     super.initState();
     player1 = Player(1, widget.player1Name);
     player2 = Player(2, widget.player2Name);
+    _observer = widget.observer ?? createObserver();
+    player1.onBreakFinalized = (_) => _commitGroup(player1);
+    player2.onBreakFinalized = (_) => _commitGroup(player2);
+    _observer.start();
     _loadPlayerStats();
   }
 
@@ -61,22 +76,26 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
     final prefs = await SharedPreferences.getInstance();
     await player1.loadStats(prefs);
     await player2.loadStats(prefs);
-    setState(() {});
+    if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
+    player1.finalizeAddBreak(() {});
+    player2.finalizeAddBreak(() {});
+    _observer.stop();
     player1.dispose();
     player2.dispose();
     super.dispose();
   }
 
   Future<bool> _onWillPop() async {
-    return await showDialog<bool>(
+    final exit = await showDialog<bool>(
           context: context,
           builder: (context) => AlertDialog(
             title: Text('Confirm Exit'),
-            content: Text('Are you sure you want to exit? Your progress will be lost.'),
+            content: Text(
+                'Are you sure you want to exit? Your progress will be lost.'),
             actions: [
               TextButton(
                 onPressed: () => Navigator.of(context).pop(false),
@@ -90,6 +109,11 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
           ),
         ) ??
         false;
+    if (exit) {
+      _finalizeGroups();
+      _observer.stop();
+    }
+    return exit;
   }
 
   Future<void> _confirmEndFrameAndStartNew() async {
@@ -103,10 +127,12 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
       context: context,
       builder: (context) {
         final media = MediaQuery.of(context);
-        final isCompactLandscape = media.size.width > media.size.height && media.size.width < 700;
+        final isCompactLandscape =
+            media.size.width > media.size.height && media.size.width < 700;
 
         return AlertDialog(
-          insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+          insetPadding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
           title: Text(
             'End frame and start new?',
             style: TextStyle(
@@ -159,6 +185,9 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
 
     if (result != true) return;
 
+    _finalizeGroups();
+    _observer.newFrame();
+    _lastEntry.clear();
     await _audioPlayer.play(AssetSource('sounds/frame_end.mp3'));
     setState(() {
       _updatePlayerFrameStats();
@@ -200,14 +229,19 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
     );
 
     if (result == true) {
+      _finalizeGroups();
+      _observer.stop();
       Navigator.of(context).pop();
     }
   }
 
-  void _pushHistory(Player player) {
+  void _pushHistory(Player player,
+      {String? entryId, bool startsGroup = false}) {
     _history.add(
       _ScoreAction(
         player: player,
+        entryId: entryId,
+        startsGroup: startsGroup,
         previousScore: player.score,
         previousMaxBreakFrame: player.maxBreakFrame,
         previousMaxBreakSession: player.maxBreakSession,
@@ -227,6 +261,15 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
     }
 
     final last = _history.removeAt(actionIndex);
+    final wasPending = last.startsGroup && _groups.containsKey(player);
+    if (wasPending) {
+      _groups.remove(player);
+      _groupStart.remove(player);
+    }
+    if (!wasPending)
+      _observer.correction(
+          last.entryId, last.previousScore, last.previousScore - player.score,
+          undo: true);
 
     setState(() {
       last.player.score = last.previousScore;
@@ -239,13 +282,14 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
         ..addAll(last.previousLastBreaks);
 
       // Also cancel any blinking/timers for this player
-      last.player.cancelPendingTimers();
+      if (wasPending || !_groups.containsKey(player))
+        last.player.cancelPendingTimers();
     });
   }
 
-
   void _updatePlayerFrameStats() async {
-    final breakWinner = player1.maxBreakFrame > player2.maxBreakFrame ? player1 : player2;
+    final breakWinner =
+        player1.maxBreakFrame > player2.maxBreakFrame ? player1 : player2;
     final breakLoser = breakWinner == player1 ? player2 : player1;
 
     const int kFactor = 16;
@@ -268,8 +312,10 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
     }
 
     if (frameWinner != null && frameLoser != null) {
-      double expectedWinner = 1 / (1 + pow(10, (frameLoser.rating - frameWinner.rating) / 400));
-      double expectedLoser = 1 / (1 + pow(10, (frameWinner.rating - frameLoser.rating) / 400));
+      double expectedWinner =
+          1 / (1 + pow(10, (frameLoser.rating - frameWinner.rating) / 400));
+      double expectedLoser =
+          1 / (1 + pow(10, (frameWinner.rating - frameLoser.rating) / 400));
 
       if (!widget.isPractice) {
         frameWinner.rating += (kFactor * (1 - expectedWinner)).round();
@@ -300,6 +346,9 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
   }
 
   void resetAll() {
+    _finalizeGroups();
+    _observer.newFrame();
+    _lastEntry.clear();
     setState(() {
       _history.clear();
 
@@ -318,23 +367,50 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
     });
   }
 
+  void _commitGroup(Player player) {
+    final attempt = _groups.remove(player);
+    final start = _groupStart.remove(player);
+    if (attempt == null || start == null) return;
+    _observer.commit(attempt, attempt.submitted, player.score - start);
+    _lastEntry[player] = attempt.entryId;
+  }
+
+  void _finalizeGroups() {
+    player1.finalizeAddBreak(() {
+      if (mounted) setState(() {});
+    });
+    player2.finalizeAddBreak(() {
+      if (mounted) setState(() {});
+    });
+  }
 
   void openScoreInput(Player player, bool isUpdate) async {
+    _finalizeGroups();
+    final attempt = isUpdate ? _observer.freeze() : null;
     final points = await showModalBottomSheet<int>(
       context: context,
       isScrollControlled: true,
-      builder: (context) => PointDialog(),
+      builder: (context) => PointDialog(observer: _observer, attempt: attempt),
     );
-    if (points != null) {
+    if (points != null && mounted) {
+      final before = player.score;
       setState(() {
-        _pushHistory(player);
-
+        _pushHistory(player,
+            entryId: isUpdate && points >= 0
+                ? attempt?.entryId
+                : _lastEntry[player]);
         if (!isUpdate) {
           player.setScoreWithBreak(points, isUpdate, () => setState(() {}));
         } else {
           player.updateScoreWithBreak(points, () => setState(() {}));
         }
       });
+      if (isUpdate && points >= 0) {
+        _observer.commit(attempt!, points, player.score - before);
+        _lastEntry[player] = attempt.entryId;
+      } else {
+        _observer.correction(_lastEntry[player], points, player.score - before);
+      }
     }
   }
 
@@ -343,7 +419,8 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
     final screenHeight = MediaQuery.of(context).size.height;
     final isLandscape = screenWidth > screenHeight;
     final isTablet = screenWidth > 700;
-    final isPhoneLandscape = screenWidth >= 600 && screenWidth < 900 && isLandscape;
+    final isPhoneLandscape =
+        screenWidth >= 600 && screenWidth < 900 && isLandscape;
     final isLargeLandscape = isLandscape && screenWidth >= 1200;
     final sizeScale = isLargeLandscape ? 1.18 : (isTablet ? 1.08 : 1.0);
 
@@ -355,28 +432,36 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
 
       final cardPadding = isTablet ? 16.0 : (isPhoneLandscape ? 6.0 : 12.0);
       final titleSize = (isTablet
-          ? (isLandscape ? 32.0 : 28.0)
-          : isPhoneLandscape
-              ? 16.0
-              : isLandscape
-                  ? 22.0
-                  : 20.0) * sizeScale;
+              ? (isLandscape ? 32.0 : 28.0)
+              : isPhoneLandscape
+                  ? 16.0
+                  : isLandscape
+                      ? 22.0
+                      : 20.0) *
+          sizeScale;
       final scoreSize = (isTablet
-          ? (isLandscape ? 94.0 : 78.0)
-          : isPhoneLandscape
-              ? 50.0
-              : isLandscape
-                  ? 52.0
-                  : 48.0) * sizeScale;
+              ? (isLandscape ? 94.0 : 78.0)
+              : isPhoneLandscape
+                  ? 50.0
+                  : isLandscape
+                      ? 52.0
+                      : 48.0) *
+          sizeScale;
       final metaSize = (isTablet
-          ? (isLandscape ? 19.0 : 17.0)
-          : isPhoneLandscape
-              ? 10.5
-              : isLandscape
-                  ? 13.5
-                  : 12.5) * sizeScale;
-      final iconSize = (isTablet ? 34.0 : (isPhoneLandscape ? 22.0 : 28.0)) * sizeScale;
-      final cardMinHeight = isPhoneLandscape ? 150.0 : isLandscape ? 280.0 * sizeScale : 210.0;
+              ? (isLandscape ? 19.0 : 17.0)
+              : isPhoneLandscape
+                  ? 10.5
+                  : isLandscape
+                      ? 13.5
+                      : 12.5) *
+          sizeScale;
+      final iconSize =
+          (isTablet ? 34.0 : (isPhoneLandscape ? 22.0 : 28.0)) * sizeScale;
+      final cardMinHeight = isPhoneLandscape
+          ? 150.0
+          : isLandscape
+              ? 280.0 * sizeScale
+              : 210.0;
 
       final content = Padding(
         padding: EdgeInsets.all(cardPadding),
@@ -444,8 +529,15 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
                   onPressed: () {
                     setState(() {
                       if (!player.hasPendingBreak) {
-                        _pushHistory(player);
+                        final other = player == player1 ? player2 : player1;
+                        other.finalizeAddBreak(() => setState(() {}));
+                        final attempt = _observer.freeze();
+                        _groups[player] = attempt;
+                        _groupStart[player] = player.score;
+                        _pushHistory(player,
+                            entryId: attempt.entryId, startsGroup: true);
                       }
+                      _groups[player]?.submitted++;
                       player.updateScoreByButton(1, () => setState(() {}));
                     });
                   },
@@ -455,7 +547,15 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
                   icon: const Icon(Icons.remove, color: Colors.redAccent),
                   onPressed: () {
                     setState(() {
-                      _pushHistory(player);
+                      final before = player.score;
+                      _groups[player]?.correctionAffected = true;
+                      _pushHistory(player,
+                          entryId:
+                              _groups[player]?.entryId ?? _lastEntry[player]);
+                      _observer.correction(
+                          _groups[player]?.entryId ?? _lastEntry[player],
+                          -1,
+                          before > 0 ? -1 : 0);
                       player.updateScoreByButton(-1, () => setState(() {}));
                     });
                   },
@@ -598,7 +698,8 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
                 bottom: false,
                 child: Center(
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 0),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 8.0, vertical: 0),
                     child: ConstrainedBox(
                       constraints: const BoxConstraints(maxWidth: 1400),
                       child: Column(
@@ -623,7 +724,9 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
                         Center(
                           child: ConstrainedBox(
                             constraints: BoxConstraints(
-                              maxWidth: isLargeLandscape ? max(screenWidth * 0.95, 1400.0) : 1400,
+                              maxWidth: isLargeLandscape
+                                  ? max(screenWidth * 0.95, 1400.0)
+                                  : 1400,
                             ),
                             child: Column(
                               mainAxisSize: MainAxisSize.min,
@@ -646,12 +749,25 @@ class _ScoreboardPageState extends State<ScoreboardPage> {
 }
 
 class PointDialog extends StatefulWidget {
+  final AiCoordinator? observer;
+  final InputAttempt? attempt;
+  const PointDialog({Key? key, this.observer, this.attempt}) : super(key: key);
   @override
   _PointDialogState createState() => _PointDialogState();
 }
 
 class _PointDialogState extends State<PointDialog> {
   final TextEditingController _controller = TextEditingController();
+  Timer? _availabilityTimer;
+  @override
+  void initState() {
+    super.initState();
+    if (widget.observer?.assist == true) {
+      _availabilityTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (mounted) setState(() {});
+      });
+    }
+  }
 
   void _submit() {
     final int? value = int.tryParse(_controller.text);
@@ -666,10 +782,26 @@ class _PointDialogState extends State<PointDialog> {
       title: Text("Enter Points"),
       content: TextField(
         controller: _controller,
+        onChanged: (_) {
+          if (widget.attempt?.selected == true) widget.attempt!.edited = true;
+        },
         keyboardType: TextInputType.number,
         autofocus: true,
         decoration: InputDecoration(
           hintText: "e.g. 4 or 0",
+          suffixIcon: widget.attempt != null &&
+                  widget.observer?.canSuggest(widget.attempt!) == true
+              ? IconButton(
+                  icon: const Icon(Icons.auto_awesome),
+                  tooltip: 'Use AI suggestion: ${widget.attempt!.points}',
+                  onPressed: () {
+                    if (widget.observer?.canSuggest(widget.attempt!) != true)
+                      return;
+                    widget.attempt!.selected = true;
+                    widget.attempt!.edited = false;
+                    _controller.text = '${widget.attempt!.points}';
+                  })
+              : null,
           border: OutlineInputBorder(), // bordered box
           contentPadding: EdgeInsets.symmetric(vertical: 12, horizontal: 12),
         ),
@@ -682,6 +814,7 @@ class _PointDialogState extends State<PointDialog> {
 
   @override
   void dispose() {
+    _availabilityTimer?.cancel();
     _controller.dispose();
     super.dispose();
   }
