@@ -14,7 +14,6 @@ def main(argv=None):
     parser.add_argument('--mode', choices=list(Mode), default='off')
     parser.add_argument('--host', default='127.0.0.1')
     parser.add_argument('--port', type=int, default=8443)
-    parser.add_argument('--camera-alias', default='table')
     parser.add_argument('--cert', type=Path)
     parser.add_argument('--key', type=Path)
     parser.add_argument('--inference-enabled', action='store_true')
@@ -41,7 +40,6 @@ def main(argv=None):
     parser.add_argument('--recording-min-free-bytes', type=int)
     parser.add_argument('--segment-seconds', type=float)
     parser.add_argument('--recorded-source', type=Path, help='Explicit local-file recording input for development; no camera')
-    parser.add_argument('--test-http-loopback', action='store_true', help='Local development only; forbids LAN binding')
     args = parser.parse_args(argv)
     if args.mode == Mode.OFF:
         print('Observer off: no service or camera processing started.')
@@ -49,11 +47,8 @@ def main(argv=None):
     token = os.environ.get('AI_SCORING_API_TOKEN')
     if not token or len(token) < 16:
         parser.error('set AI_SCORING_API_TOKEN to a protected token of at least 16 characters')
-    if args.test_http_loopback:
-        if args.host not in ('127.0.0.1', '::1', 'localhost'):
-            parser.error('test HTTP must bind loopback')
-    elif not args.cert or not args.key:
-        parser.error('HTTPS requires --cert and --key')
+    if bool(args.cert) != bool(args.key):
+        parser.error('optional HTTPS requires both --cert and --key')
     try:
         recording=RecordingConfig(args.recording_enabled,args.retention_seconds,args.recording_total_bytes,args.recording_min_free_bytes,args.segment_seconds)
         import json
@@ -64,17 +59,29 @@ def main(argv=None):
             prediction_ttl_seconds=args.prediction_ttl_seconds,max_frame_gap_seconds=args.max_frame_gap_seconds,
             model_timeout_seconds=args.model_timeout_seconds,window_frames=args.window_frames,min_confidence=args.min_confidence,
             capture_uncertainty_ms=args.capture_uncertainty_ms,max_capture_uncertainty_ms=args.max_capture_uncertainty_ms,calibration=calibration)
-        config = Config(args.data_directory, Mode(args.mode), args.camera_alias,
+        config = Config(args.data_directory, Mode(args.mode),
             camera_url=os.environ.get("AI_SCORING_CAMERA_URL"),recording=recording,recorded_source=args.recorded_source,inference=inference)
     except (ValueError,OSError):
         parser.error("invalid recording/inference configuration; check explicit model, budgets, local endpoint and calibration")
+    context=None
+    if args.cert:
+        context=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.minimum_version=ssl.TLSVersion.TLSv1_2
+        try:
+            context.load_cert_chain(args.cert,args.key)
+        except (OSError,ssl.SSLError):
+            parser.error('unable to load optional HTTPS certificate/key')
     manager = SessionManager(config)
-    server = ThreadingHTTPServer((args.host, args.port), handler_for(manager, token))
-    if not args.test_http_loopback:
-        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        context.minimum_version = ssl.TLSVersion.TLSv1_2
-        context.load_cert_chain(args.cert, args.key)
-        server.socket = context.wrap_socket(server.socket, server_side=True)
+    server=None
+    try:
+        server=ThreadingHTTPServer((args.host,args.port),handler_for(manager,token))
+        if context:
+            server.socket=context.wrap_socket(server.socket,server_side=True)
+    except Exception:
+        if server:
+            server.server_close()
+        manager.close()
+        raise
     try:
         server.serve_forever(poll_interval=0.5)
     except KeyboardInterrupt:

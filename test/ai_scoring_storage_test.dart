@@ -1,15 +1,18 @@
 import 'dart:io';
+import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:snooker_scoreboard/ai_scoring/client.dart';
 import 'package:snooker_scoreboard/ai_scoring/coordinator.dart';
 
 class ReplayTransport implements ObserverTransport {
   final List<Map<String, dynamic>> delivered = [];
+  final List<Map<String, dynamic>> sessions = [];
   bool fail = true;
   @override
   Future<Map<String, dynamic>> request(
       String method, String path, Map<String, dynamic>? body) async {
     if (fail) throw StateError('offline');
+    if (path == '/v1/sessions') sessions.add(Map.from(body!));
     if (path.endsWith('/events')) delivered.add(Map.from(body!));
     return {};
   }
@@ -43,7 +46,7 @@ void main() {
       () async {
     final root = await Directory.systemTemp.createTemp('observer-outbox-test');
     addTearDown(() => root.delete(recursive: true));
-    const config = AiConfig(mode: AiMode.dryRun, cameraAlias: 'table');
+    const config = AiConfig(mode: AiMode.dryRun);
     final old =
         JsonPendingStore('old-session', config, directory: () async => root);
     await old.save([
@@ -75,7 +78,7 @@ void main() {
       () async {
     final root = await Directory.systemTemp.createTemp('observer-stop-retry');
     addTearDown(() => root.delete(recursive: true));
-    const config = AiConfig(mode: AiMode.dryRun, cameraAlias: 'table');
+    const config = AiConfig(mode: AiMode.dryRun);
     final old = JsonPendingStore('stopped-session', config,
         directory: () async => root);
     await old.save([
@@ -94,5 +97,29 @@ void main() {
     expect(transport.applied, {'stop-original'});
     await fresh.replay(transport);
     expect(transport.attempted.length, 2);
+  });
+  test('legacy pending camera alias is ignored and new files omit it',
+      () async {
+    final root = await Directory.systemTemp.createTemp('observer-legacy-alias');
+    addTearDown(() => root.delete(recursive: true));
+    const config = AiConfig(mode: AiMode.dryRun);
+    final old = JsonPendingStore('old', config, directory: () async => root);
+    await old.save([
+      {'eventId': 'stop', 'sequence': 1, 'type': 'session_stopped'}
+    ]);
+    final file = File('${root.path}/ai_scoring/old-pending.json');
+    final data = jsonDecode(await file.readAsString()) as Map<String, dynamic>;
+    expect(data.containsKey('cameraAlias'), isFalse);
+    data['cameraAlias'] = 'legacy-table';
+    await file.writeAsString(jsonEncode(data));
+    final transport = ReplayTransport()..fail = false;
+    await JsonPendingStore('new', config, directory: () async => root)
+        .replay(transport);
+    expect(transport.sessions.single, {'sessionId': 'old', 'mode': 'dry-run'});
+    expect(
+        (jsonDecode(await file.readAsString()) as Map)
+            .containsKey('cameraAlias'),
+        isFalse);
+    expect(transport.delivered.single['eventId'], 'stop');
   });
 }

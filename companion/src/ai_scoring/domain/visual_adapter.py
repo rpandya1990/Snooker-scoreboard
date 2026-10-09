@@ -1,4 +1,4 @@
-"""Score-free offline visual input contract. Implementations are operator supplied."""
+"""Score-free local visual input contract for camera observations."""
 from dataclasses import dataclass
 from typing import Protocol
 from ai_scoring.domain.scoring import PotObservation

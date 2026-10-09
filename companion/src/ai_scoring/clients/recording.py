@@ -4,7 +4,8 @@ from datetime import timedelta
 import hashlib
 import json
 from fractions import Fraction
-from ai_scoring.clients.probe import KNOWN_CODECS
+KNOWN_CODECS = frozenset(('h264','hevc','mjpeg','mpeg4','av1','vp8','vp9',
+    'mpeg2video','rawvideo','prores','ffv1','h263','theora','jpeg2000','png'))
 import os
 from pathlib import Path
 import shutil

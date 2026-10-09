@@ -28,7 +28,7 @@ class LiveSessionTests(unittest.TestCase):
             manager=SessionManager(Config(directory,Mode.DRY_RUN,inference=InferenceConfig(enabled=True,model='fixture')),
                 clock=lambda:now,inference_factory=factory,watchdog_seconds=.01,
                 recording_factory=lambda *a,**k:self.fail('recording constructed'))
-            request={'sessionId':'s','mode':'dry-run','cameraAlias':'table'}
+            request={'sessionId':'s','mode':'dry-run'}
             try:
                 response=manager.open(request)
                 self.assertEqual(response['inferenceHealth']['status'],'observing')

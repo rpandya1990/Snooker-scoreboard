@@ -6,12 +6,8 @@ enum AiMode { off, dryRun, assist }
 
 class AiConfig {
   final AiMode mode;
-  final String endpoint, cameraAlias, token;
-  const AiConfig(
-      {this.mode = AiMode.off,
-      this.endpoint = '',
-      this.cameraAlias = '',
-      this.token = ''});
+  final String endpoint, token;
+  const AiConfig({this.mode = AiMode.off, this.endpoint = '', this.token = ''});
   factory AiConfig.environment() {
     const mode = String.fromEnvironment('AI_SCORING_MODE', defaultValue: 'off');
     return AiConfig(
@@ -21,7 +17,6 @@ class AiConfig {
                 ? AiMode.dryRun
                 : AiMode.off,
         endpoint: const String.fromEnvironment('AI_SCORING_ENDPOINT'),
-        cameraAlias: const String.fromEnvironment('AI_SCORING_CAMERA_ALIAS'),
         token: const String.fromEnvironment('AI_SCORING_TOKEN'));
   }
 }
@@ -247,8 +242,7 @@ class AiCoordinator {
           await (store as RecoverablePendingStore).replay(transport!);
         await transport!.request('POST', '/v1/sessions', {
           'sessionId': sessionId,
-          'mode': config.mode == AiMode.assist ? 'assist' : 'dry-run',
-          'cameraAlias': config.cameraAlias
+          'mode': config.mode == AiMode.assist ? 'assist' : 'dry-run'
         });
         _opened = true;
       }

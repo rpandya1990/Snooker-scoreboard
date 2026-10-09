@@ -1,5 +1,6 @@
 # Design extension: recorded scoring datasets
 
+> Historical document: the approved [simplification amendment](ai-scoring-simplification-amendment.md) supersedes transport, camera-alias and shipped dataset/evaluation tooling described here.
 **Status:** Approved by the user on 2026-10-05, with local storage and reviewed offline improvement first.
 **Sources:** [Dataset requirements](ai-scoring-datasets-requirements.md), [approved architecture](ai-break-scoring-design.md).
 

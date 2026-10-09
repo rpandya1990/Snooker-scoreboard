@@ -69,3 +69,10 @@ Local trials used only the supplied reference screenshot, not a live camera or a
 The current shell has neither the protected camera URL nor companion pairing token configured, so no real RTSP validation was performed. Remaining acceptance requires camera geometry/calibration, measured exposure alignment, representative gameplay and sustained throughput, physical-device TLS/connectivity, and independent held-out evaluation against the >90% exact-break target. Leave the deployed default off and begin with recorded replay or explicitly configured dry-run. No automatic training, deployment, commits, push or GitHub publication occurred.
 
 See [Local vision scoring](local-vision-scoring.md) for setup, model trials and limitations.
+
+
+## Approved simplification — 2026-10-06
+
+The approved simplification removes shipped synthetic replay, dataset import/cohort/review/evaluation, offline replay and camera-probe tools. Recording metadata, live inference, JSONL comparisons and the read-only failure-debugging script remain. Alias fields are removed; the RTSP URL stays in the companion environment. API HTTP is supported with the existing bearer token; certificates are optional. Flutter accepts HTTP only for private/local addresses or `.local` names, with HTTPS retaining normal certificate validation.
+
+Independent backend QA passed all 88 remaining installed-package tests, including brown-next clearance across score entries, retired module absence and authenticated HTTP. Flutter implementation checks passed 16 tests, including actual loopback transport, authentication/redirect handling, public-HTTP rejection and legacy pending-event recovery. Device-specific HTTP exceptions await the companion Mac's LAN address; no broad platform cleartext exception was applied. Real-camera performance and physical-device connectivity remain unverified. Current changes are local and have not been committed or pushed.

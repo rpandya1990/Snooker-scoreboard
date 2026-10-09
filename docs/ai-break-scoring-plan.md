@@ -1,5 +1,6 @@
 # Implementation plan: AI-assisted break scoring
 
+> Historical document: the approved [simplification amendment](ai-scoring-simplification-amendment.md) supersedes transport, camera-alias and shipped dataset/evaluation tooling described here.
 **Basis:** [Approved PRD](ai-break-scoring-prd.md) and [approved design](ai-break-scoring-design.md). Architecture approved on 2026-10-05. Root owns planning and integration; SDE owns implementation; QA independently validates completed behavior.
 
 **Progress:** Companion rules/storage/API, Flutter dry-run/optional assist, recording/dataset tools and experimental local Ollama live/replay inference are implemented. Latest companion validation passed 105 tests; Flutter passed 13 tests and an Android debug build. Actual camera feasibility, model throughput, device connectivity and held-out rollout evaluation remain unverified; see [validation status](ai-break-scoring-validation.md) and [local setup](local-vision-scoring.md).

@@ -80,9 +80,7 @@ class SessionManager:
             raise EventConflict('observer is off')
         if self.config.mode == Mode.DRY_RUN and mode == Mode.ASSIST:
             raise EventConflict('assist is not enabled by server configuration')
-        if request.get('cameraAlias') != self.config.camera_alias:
-            raise ValueError('unknown camera alias')
-        metadata = {'sessionId': session_id, 'mode': mode.value, 'cameraAlias': self.config.camera_alias}
+        metadata = {'sessionId': session_id, 'mode': mode.value}
         with self._lock:
             self._expire()
             if self._active and self._active != session_id and not (session_id in self._sessions and self._sessions[session_id].stopped):
@@ -91,7 +89,7 @@ class SessionManager:
                 store = JsonlSessionStore(self.config.data_directory, session_id)
                 records = store.records
                 previous = next((r for r in records if r['type'] == 'session_opened'), None)
-                if previous and previous['payload'] != metadata:
+                if previous and {key:previous['payload'].get(key) for key in metadata} != metadata:
                     store.close()
                     raise IdentityConflict('session ID reused with different configuration')
                 if not previous:

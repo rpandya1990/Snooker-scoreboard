@@ -11,7 +11,6 @@ class Mode(StrEnum):
 class Config:
     data_directory: Path
     mode: Mode = Mode.OFF
-    camera_alias: str = 'table'
     camera_url: str | None = field(default=None, repr=False, compare=False)
     recording: 'RecordingConfig' = field(default_factory=lambda: RecordingConfig())
     recorded_source: Path | None = field(default=None, repr=False, compare=False)

@@ -30,7 +30,7 @@ class RecordingSessionTests(unittest.TestCase):
             return recorder
         self.manager=SessionManager(Config(self.directory.name,Mode.DRY_RUN,camera_url='rtsp://fake:fake@localhost/stream',
             recording=RecordingConfig(True,60,10000,100,5)),clock=lambda:self.now,recording_factory=factory,watchdog_seconds=.01)
-        self.metadata={'sessionId':'s','mode':'dry-run','cameraAlias':'table'}
+        self.metadata={'sessionId':'s','mode':'dry-run'}
     def tearDown(self):
         self.manager.close()
         self.directory.cleanup()

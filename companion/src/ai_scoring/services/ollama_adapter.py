@@ -9,7 +9,7 @@ from collections import deque
 from ai_scoring.clients.ollama import OllamaClient, OllamaError
 from ai_scoring.domain.scoring import Ball, PotObservation
 from ai_scoring.domain.visual_adapter import VisualResult
-from ai_scoring.services.datasets import utc
+from ai_scoring.dao.read_helpers import utc
 
 PROMPT_VERSION='snooker-temporal-observations-v1'
 COLOURS=[ball.value for ball in Ball if ball!=Ball.RED]

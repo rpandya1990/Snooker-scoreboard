@@ -10,7 +10,8 @@ MAX_BODY = 64 * 1024
 def handler_for(manager, bearer_token):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format, *args):
-            # Requests/headers/payloads can contain secrets; retain no default access log.
+            # Override BaseHTTPRequestHandler's inherited request logger intentionally.
+            # Its access/error logs may expose headers or request details; keep them suppressed.
             pass
 
         def _reply(self, status, payload):

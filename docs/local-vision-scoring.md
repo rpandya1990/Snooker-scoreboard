@@ -1,6 +1,6 @@
 # Local vision scoring — experimental integration
 
-**Status:** Local Ollama adapter and asynchronous live observation are implemented. Production scoring accuracy and throughput are not established. Inference defaults off; use dry-run and recorded datasets first.
+**Status:** Local Ollama adapter and asynchronous live observation are implemented. Production scoring accuracy and throughput are not established. Inference defaults off; use dry-run recording and the failure-debugging script first.
 
 The approved `VisualAdapter.observe(frame, BoundaryContext)` contract is reused. Ollama sees ordered images and observation context; it never receives submitted scores, reviewed labels or original AI totals. It returns candidate observations, and the existing rules accumulator calculates points.
 
@@ -29,38 +29,9 @@ Ollama's [vision API](https://docs.ollama.com/capabilities/vision) accepts image
 - Event timestamps come from referenced input frames, not model-generated clocks. The adapter preserves table baseline across run boundaries and resets on physical frame changes/discontinuity.
 - Fixed versions, model digest, prompt, calibration, actual sampling and latency remain in provenance. Original frozen score-entry predictions are never replaced by later results.
 
-## Offline replay first
+## Calibration
 
-Use [recorded dataset setup](record-your-next-game.md) to import footage, assign cohorts, establish justified clock mappings and independently review labels. Configure a trusted local adapter settings JSON. For diagnostics, this minimal example intentionally lacks pocket calibration:
-
-```json
-{
-  "model": "qwen3-vl:4b-instruct",
-  "endpoint": "http://127.0.0.1:11434",
-  "windowFrames": 3,
-  "maxFrameGapSeconds": 2.0,
-  "minConfidence": 0.95,
-  "seed": 0,
-  "timeoutSeconds": 60,
-  "maxImageWidth": 1280,
-  "numPredict": 2048,
-  "numCtx": 16384
-}
-```
-
-For scoring, add `calibration` containing a nonempty `version`, six `pockets` as normalized `[x,y]` coordinates and positive `pocketRadius` no greater than 0.25. Coordinates must match the image after any source ROI crop. Measure/check this on the actual feed; no calibration from the reference screenshot was installed for production. Without it, even empty-event and zero-point results remain unavailable.
-
-```sh
-companion/.venv/bin/python -m ai_scoring.recorded_dataset \
-  --root "/absolute/private/datasets" replay "<dataset-id>" \
-  --adapter ai_scoring.services.ollama_adapter:create \
-  --settings /absolute/private/vision-settings.json \
-  --sample-fps 1
-```
-
-The optional replay sampling rate selects original presentation timestamps and is recorded in the run. Sparse sampling can miss shots; coverage and watermark checks remain enforced. Decoder stall time excludes time the generator is paused while the model processes a frame, so healthy backpressure is not mistaken for a stalled decoder. Individual decoder reads and model calls remain bounded.
-
-Compare versions using the existing independent-review evaluation command. Keep tuning and held-out recordings separated. Do not count these reference/synthetic results toward the >90% gate.
+Use a protected calibration JSON containing a nonempty `version`, six normalized `[x,y]` pocket coordinates and a positive `pocketRadius` no greater than 0.25. Coordinates must match the image after any ROI crop. Missing calibration suppresses scoring, including zero-point predictions.
 
 ## Live dry-run
 
@@ -79,14 +50,12 @@ Add these options to the companion startup command from the recording guide:
 
 These are initial experimental settings, not demonstrated real-time settings. They will suppress predictions when the benchmarked model falls behind. Recording and inference are independent toggles; full video collection can continue while inference reports unavailable.
 
-Capture exposure mapping is unknown by default. A justified positive `--capture-uncertainty-ms` bound is required for eligible live predictions; `--max-capture-uncertainty-ms` defaults to 500. Do not guess a bound merely to enable scores. Receive time alone does not establish exposure time. Unknown mapping supports diagnostics and dataset collection while scoring remains unavailable.
+Capture exposure mapping is unknown by default. A justified positive `--capture-uncertainty-ms` bound is required for eligible live predictions; `--max-capture-uncertainty-ms` defaults to 500. Do not guess a bound merely to enable scores. Receive time alone does not establish exposure time. Unknown mapping supports diagnostics and recording while scoring remains unavailable.
 
 The observer uses sampled original PTS and a bounded asynchronous queue. Queue overflow, old jobs, gaps, stale timestamps and excessive uncertainty are explicit failures. Work tagged to an earlier frame/run/epoch cannot mutate replacement state or retroactively improve a score-entry comparison. Model work stays outside HTTP score handlers. Empty-frame watermarks do not falsely mark normal input as new scoring activity.
 
-Session leases, stop and shutdown close capture. In-flight model bodies are cancelled where possible; header waits remain bounded by the configured timeout and stopped workers reject late effects. Operators can inspect inference health in session/heartbeat metadata.
+Session leases, stop and shutdown close capture. In-flight model bodies are cancelled where possible; header waits remain bounded by the configured timeout and stopped workers reject late effects. Operators can inspect inference health in session-open metadata.
 
 ## Validation and next evidence
 
-The installed companion suite passes 105 tests, including locality, strict schema/calibration, window warmup, duplicate suppression, run-generation checks, failures/cleanup, score-answer isolation, slow model consumers and original-PTS sampling. Existing Flutter tests remain applicable; no Dart behavior changed in this integration.
-
-Actual RTSP, camera calibration, exposure alignment, sustained model throughput, pots/respots and held-out exact-break accuracy remain untested. Collect a real play recording next, measure the model's missed/false events and latency, and tune on reviewed training examples. Keep assist restricted until held-out results satisfy the approved gate. No automatic training, model deployment, commit or publication was performed.
+See [validation status](ai-break-scoring-validation.md) for current checks. Actual RTSP, camera calibration, exposure alignment, sustained throughput and real-break accuracy remain unverified. Collect real gameplay and use the [failure-debugging script](record-your-next-game.md) to inspect discrepancies against submitted points. No model training or automatic deployment is included.

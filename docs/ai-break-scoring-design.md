@@ -1,5 +1,6 @@
 # Technical design: AI-assisted break scoring — Phase 1
 
+> Historical document: the approved [simplification amendment](ai-scoring-simplification-amendment.md) supersedes transport, camera-alias and shipped dataset/evaluation tooling described here.
 **Status:** Approved by the user on 2026-10-05, including JSON storage and a separate companion package in the current repository.
 **Requirements:** [Approved PRD](ai-break-scoring-prd.md).
 

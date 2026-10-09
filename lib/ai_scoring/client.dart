@@ -3,19 +3,36 @@ import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'coordinator.dart';
 
-class HttpsObserverTransport implements ObserverTransport {
+bool _isLanHost(String host) {
+  if (host.toLowerCase().endsWith('.local')) return true;
+  final address = InternetAddress.tryParse(host);
+  if (address == null) return false;
+  if (address.isLoopback) return true;
+  final bytes = address.rawAddress;
+  if (address.type == InternetAddressType.IPv4) {
+    return bytes[0] == 10 ||
+        (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31) ||
+        (bytes[0] == 192 && bytes[1] == 168);
+  }
+  return (bytes[0] & 0xfe) == 0xfc ||
+      (bytes[0] == 0xfe && (bytes[1] & 0xc0) == 0x80);
+}
+
+class HttpObserverTransport implements ObserverTransport {
   final AiConfig config;
   final HttpClient _client = HttpClient()
     ..connectionTimeout = const Duration(seconds: 3);
-  HttpsObserverTransport(this.config);
+  HttpObserverTransport(this.config);
   @override
   Future<Map<String, dynamic>> request(
       String method, String path, Map<String, dynamic>? body) async {
     final base = Uri.parse(config.endpoint);
-    if (base.scheme != 'https' ||
+    if ((base.scheme != 'https' && base.scheme != 'http') ||
+        (base.scheme == 'http' && !_isLanHost(base.host)) ||
         base.userInfo.isNotEmpty ||
         config.token.isEmpty) {
-      throw StateError('Observer requires authenticated HTTPS');
+      throw StateError(
+          'Observer requires HTTPS or authenticated local-network HTTP');
     }
     final request = await _client
         .openUrl(method, base.resolve(path))
@@ -58,7 +75,6 @@ class JsonPendingStore implements PendingStore, RecoverablePendingStore {
     await _write(File('${folder.path}/$sessionId-pending.json'), {
       'sessionId': sessionId,
       'mode': config.mode == AiMode.assist ? 'assist' : 'dry-run',
-      'cameraAlias': config.cameraAlias,
       'events': events
     });
   }
@@ -83,6 +99,8 @@ class JsonPendingStore implements PendingStore, RecoverablePendingStore {
       final file = entity as File;
       final data = Map<String, dynamic>.from(
           jsonDecode(await file.readAsString()) as Map);
+      // Legacy aliases describe old configuration, not camera selection.
+      data.remove('cameraAlias');
       final events = (data['events'] as List)
           .map((e) => Map<String, dynamic>.from(e as Map))
           .toList();
@@ -90,11 +108,8 @@ class JsonPendingStore implements PendingStore, RecoverablePendingStore {
       final oldId = data['sessionId'] as String;
       // Reopening only delivers metadata. The observer must report a restart gap;
       // Flutter never resumes that frame or requests its prediction.
-      await transport.request('POST', '/v1/sessions', {
-        'sessionId': oldId,
-        'mode': data['mode'],
-        'cameraAlias': data['cameraAlias']
-      });
+      await transport.request(
+          'POST', '/v1/sessions', {'sessionId': oldId, 'mode': data['mode']});
       if (events.last['type'] != 'session_stopped') {
         events.add({
           'eventId': observerId(),
@@ -123,6 +138,6 @@ AiCoordinator createObserver() {
   final id = observerId();
   return AiCoordinator(config,
       sessionId: id,
-      transport: HttpsObserverTransport(config),
+      transport: HttpObserverTransport(config),
       store: JsonPendingStore(id, config));
 }

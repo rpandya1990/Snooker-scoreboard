@@ -1,5 +1,6 @@
 # Recorded datasets implementation plan
 
+> Historical document: the approved [simplification amendment](ai-scoring-simplification-amendment.md) supersedes transport, camera-alias and shipped dataset/evaluation tooling described here.
 **Basis:** [Approved extension](ai-scoring-datasets-design.md), [dataset requirements](ai-scoring-datasets-requirements.md). Recording storage remains local. No automatic training, remote inference or deployment.
 
 **Implementation status:** Recording/lifecycle, immutable import/cohorts, alignment, blind review, configured local-adapter replay and replay evaluation are implemented. The installed companion suite passes 71 tests; independent QA passed the preceding 69-test suite and the final 19 affected recording/lifecycle tests. Real FFmpeg local-video recording/decoding and an import/replay workflow were exercised. Actual RTSP compatibility, production model inference and >90% held-out accuracy remain unverified. Setup: [Record your next game](record-your-next-game.md).

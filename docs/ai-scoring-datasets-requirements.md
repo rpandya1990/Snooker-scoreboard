@@ -1,5 +1,6 @@
 # Functional addendum: recorded scoring datasets
 
+> Historical document: the approved [simplification amendment](ai-scoring-simplification-amendment.md) supersedes transport, camera-alias and shipped dataset/evaluation tooling described here.
 **Status:** Approved with the recording design on 2026-10-05, using local storage and reviewed offline improvement first. Automatic training remains outside this implementation scope.
 
 **Goal:** Capture future play alongside timestamped AI predictions and submitted scores, creating reviewable datasets for reproducible evaluation and deliberate model improvement. Manual scoring stays authoritative and available throughout collection.

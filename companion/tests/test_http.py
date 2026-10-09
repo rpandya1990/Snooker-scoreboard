@@ -33,7 +33,7 @@ class HTTPTests(unittest.TestCase):
         connection.close()
         return result
     def test_lifecycle_auth_idempotency_and_conflict(self):
-        session={'sessionId':'s','mode':'dry-run','cameraAlias':'table'}
+        session={'sessionId':'s','mode':'dry-run'}
         self.assertEqual(self.request('POST','/v1/sessions',session,False)[0],401)
         self.assertEqual(self.request('POST','/v1/sessions',session)[0],200)
         self.assertEqual(self.request('POST','/v1/sessions',session)[0],200)
@@ -50,17 +50,25 @@ class HTTPTests(unittest.TestCase):
         now=datetime.now(timezone.utc)
         manager=SessionManager(Config(self.directory.name,Mode.OFF),clock=lambda:now)
         with self.assertRaises(EventConflict):
-            manager.open({'sessionId':'s','mode':'dry-run','cameraAlias':'table'})
+            manager.open({'sessionId':'s','mode':'dry-run'})
         manager=SessionManager(Config(self.directory.name,Mode.DRY_RUN),clock=lambda:now)
-        manager.open({'sessionId':'leased','mode':'dry-run','cameraAlias':'table'})
+        manager.open({'sessionId':'leased','mode':'dry-run'})
         now += timedelta(seconds=31)
         with self.assertRaises(EventConflict):
             manager.get('leased')
         manager.close()
     def test_stopped_event_retry_retains_ack(self):
-        self.request('POST','/v1/sessions',{'sessionId':'s','mode':'dry-run','cameraAlias':'table'})
+        self.request('POST','/v1/sessions',{'sessionId':'s','mode':'dry-run'})
         stop={'eventId':'stop','sequence':1,'type':'session_stopped'}
         first=self.request('POST','/v1/sessions/s/events',stop)
         self.assertEqual(first[0],200)
         self.assertEqual(first,self.request('POST','/v1/sessions/s/events',stop))
-        self.assertTrue(self.request('POST','/v1/sessions',{'sessionId':'s','mode':'dry-run','cameraAlias':'table'})[1]['stopped'])
+        self.assertTrue(self.request('POST','/v1/sessions',{'sessionId':'s','mode':'dry-run'})[1]['stopped'])
+    def test_session_contract_without_alias_or_camera_credentials(self):
+        secret='rtsp://fake:private@host/stream'
+        status,response=self.request('POST','/v1/sessions',{'sessionId':'s','mode':'dry-run','cameraUrl':secret})
+        self.assertEqual(status,200)
+        self.assertNotIn('cameraAlias',response)
+        self.assertNotIn(secret,json.dumps(response))
+        opened=self.manager.get('s').store.records[0]['payload']
+        self.assertEqual(opened,{'sessionId':'s','mode':'dry-run'})
