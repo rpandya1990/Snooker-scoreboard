@@ -30,8 +30,7 @@ class _PlayersPageState extends State<PlayersPage> {
         .toList(); // id is unused here, or can assign incrementally
     // Load stats for each player
     for (var player in players) {
-      await player.
-      (prefs);
+      await player.loadStats(prefs);
     }
     setState(() {});
   }

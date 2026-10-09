@@ -24,8 +24,9 @@ class Player {
   Timer? _blinkTimer;
   bool showScore = true;
 
+  void Function(int)? onBreakFinalized;
   Player(this.id, this.name);
-  
+
   Future<void> loadStats(SharedPreferences prefs) async {
     cumulativeMaxBreak = prefs.getInt('player_${name}_cumulativeMaxBreak') ?? 0;
     totalFramesWon = prefs.getInt('player_${name}_totalFramesWon') ?? 0;
@@ -72,6 +73,7 @@ class Player {
     }
     // Track this break
     _recordBreak(breakPoints);
+    onBreakFinalized?.call(breakPoints);
 
     _pendingAddStartScore = null;
     _addTimer?.cancel();
@@ -81,10 +83,11 @@ class Player {
   }
 
   void updateScoreByButton(int delta, VoidCallback updateUI) {
+    final previousScore = score;
     score = (score + delta).clamp(0, 999);
     if (delta > 0) {
       if (_addTimer == null) {
-        _pendingAddStartScore = score - delta;
+        _pendingAddStartScore = previousScore;
       }
       _addTimer?.cancel();
       _addTimer = Timer(Duration(seconds: 5), () {
@@ -127,13 +130,13 @@ class Player {
   }
 
   void _recordBreak(int points) {
-      if (points <= 0) return;
-      lastBreaks.add(points);
-      if (lastBreaks.length > 3) {
-        // Keep only the last 3
-        lastBreaks.removeAt(0);
-      }
+    if (points <= 0) return;
+    lastBreaks.add(points);
+    if (lastBreaks.length > 3) {
+      // Keep only the last 3
+      lastBreaks.removeAt(0);
     }
+  }
 
   void cancelPendingTimers() {
     _addTimer?.cancel();
@@ -143,5 +146,4 @@ class Player {
     _pendingAddStartScore = null;
     showScore = true;
   }
-
 }
