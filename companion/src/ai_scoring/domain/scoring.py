@@ -14,6 +14,19 @@ class Ball(StrEnum):
 VALUES = {ball: index for index, ball in enumerate(Ball, 1)}
 CLEARANCE = tuple(Ball)[1:]
 
+def interpretable_table(reds, colours):
+    """Whether a settled inventory alone determines the rules state.
+
+    With reds remaining every colour must be spotted; in clearance the remaining
+    colours must be the highest ones (yellow is potted first, black last).
+    """
+    colours = frozenset(colours)
+    if type(reds) is not int or not 0 <= reds <= 15:
+        return False
+    if reds:
+        return colours == frozenset(CLEARANCE)
+    return any(colours == frozenset(CLEARANCE[index:]) for index in range(len(CLEARANCE)))
+
 @dataclass(frozen=True)
 class PotObservation:
     observation_id: str

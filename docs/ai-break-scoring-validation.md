@@ -76,3 +76,25 @@ See [Local vision scoring](local-vision-scoring.md) for setup, model trials and 
 The approved simplification removes shipped synthetic replay, dataset import/cohort/review/evaluation, offline replay and camera-probe tools. Recording metadata, live inference, JSONL comparisons and the read-only failure-debugging script remain. Alias fields are removed; the RTSP URL stays in the companion environment. API HTTP is supported with the existing bearer token; certificates are optional. Flutter accepts HTTP only for private/local addresses or `.local` names, with HTTPS retaining normal certificate validation.
 
 Independent backend QA passed all 88 remaining installed-package tests, including brown-next clearance across score entries, retired module absence and authenticated HTTP. Flutter implementation checks passed 16 tests, including actual loopback transport, authentication/redirect handling, public-HTTP rejection and legacy pending-event recovery. Device-specific HTTP exceptions await the companion Mac's LAN address; no broad platform cleartext exception was applied. Real-camera performance and physical-device connectivity remain unverified. Current changes are local and have not been committed or pushed.
+
+
+## Shot-triggered implementation — 2026-10-29
+
+Opt-in shot scheduling is implemented with bounded motion evidence and one VLM call per settled batch. Periodic observation remains the default. Independent clean-wheel QA and final installed-package validation both passed all 127 backend tests. No Flutter behavior changed in this implementation. See [shot-triggered setup and limitations](shot-triggered-inference.md). Live-camera motion recall, sustained throughput and break accuracy are not established; the prior static baseline success is not a scoring accuracy result.
+
+
+## Settled-table inventory shot mode — 2026-10-29
+
+User-approved change: shot mode now reads each settled table with two independent single-image calls and diffs agreeing inventories into pot/respot observations; the multi-frame temporal shot flow was removed. A confirmed full-table baseline clears earlier pre-baseline observation failures. All 133 installed-package companion tests pass. On synthetic frames with local `qwen3-vl:4b-instruct`, a reading took about 2.1 seconds and a two-reading check about 4.2 seconds (previously about 12–20 seconds per multi-frame request). No live camera was used; counting accuracy on real footage, motion recall and break accuracy remain unverified. No Flutter behavior changed. See [shot-triggered inference](shot-triggered-inference.md).
+
+## Colour-detection shot reader — 2026-10-29
+
+Live dry-run frames showed local VLMs unable to read the target table's pink/brown balls reliably. With user approval, shot mode now uses local colour-blob detection (no model) and accepts mid-frame baselines, keeping the in-progress visit unavailable until the next entry. On two saved live frames the detector matched hand counts exactly and the adapter reproduced the entered 4-point red–green break. All 145 installed-package tests pass. Live accuracy remains unverified. See [shot-triggered inference](shot-triggered-inference.md).
+
+## Continuous tracking — 2026-10-29
+
+A live test with motion-gated reading missed a blue potted and respotted during continuous movement near the rail. With user approval, shot mode now reads every frame and accepts an inventory once it is identical on clear frames for 0.5 seconds; the motion detector and its settings were removed, and the Flutter client polls every 0.5 seconds. All 136 companion tests and 18 Flutter tests pass. Live accuracy remains unverified.
+
+## Single camera connection and green detection — 2026-10-29
+
+A live session with recording and tracking both enabled recorded video, but the camera refused the tracking stream. The recorder now relays an unmodified stream copy over loopback UDP for tracking; a real FFmpeg check from a recorded segment wrote segments and tracked red, pink and pink respot correctly. Replaying that session's recording found both entered breaks (8 and 7) exactly after the green-ball rule gained a local-contrast check (shaded cloth matched the green ball's colour). All 140 companion and 19 Flutter tests pass. Live accuracy remains unverified.

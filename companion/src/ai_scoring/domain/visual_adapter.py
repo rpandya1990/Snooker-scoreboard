@@ -28,6 +28,7 @@ class VisualResult:
     baseline_reds: int | None = None
     quality_reasons: tuple[str, ...] = ()
     processed_through: str | None = None
+    baseline_colours: tuple[str, ...] | None = None
 
 class VisualAdapter(Protocol):
     metadata: dict

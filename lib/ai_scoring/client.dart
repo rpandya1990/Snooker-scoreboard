@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'coordinator.dart';
@@ -26,32 +27,60 @@ class HttpObserverTransport implements ObserverTransport {
   @override
   Future<Map<String, dynamic>> request(
       String method, String path, Map<String, dynamic>? body) async {
-    final base = Uri.parse(config.endpoint);
+    Uri base;
+    try {
+      base = Uri.parse(config.endpoint);
+    } catch (_) {
+      throw ObserverTransportException(ObserverFailure.invalidConfiguration);
+    }
     if ((base.scheme != 'https' && base.scheme != 'http') ||
         (base.scheme == 'http' && !_isLanHost(base.host)) ||
         base.userInfo.isNotEmpty ||
         config.token.isEmpty) {
-      throw StateError(
-          'Observer requires HTTPS or authenticated local-network HTTP');
+      throw ObserverTransportException(ObserverFailure.invalidConfiguration);
     }
-    final request = await _client
-        .openUrl(method, base.resolve(path))
-        .timeout(const Duration(seconds: 3));
-    request.followRedirects = false;
-    request.headers
-        .set(HttpHeaders.authorizationHeader, 'Bearer ${config.token}');
-    request.headers.contentType = ContentType.json;
-    if (body != null) request.write(jsonEncode(body));
-    final response = await request.close().timeout(const Duration(seconds: 3));
-    if (response.statusCode < 200 || response.statusCode >= 300)
-      throw StateError('Observer unavailable');
-    final text = await utf8.decoder
-        .bind(response)
-        .join()
-        .timeout(const Duration(seconds: 3));
-    return text.isEmpty
-        ? {}
-        : Map<String, dynamic>.from(jsonDecode(text) as Map);
+    try {
+      final request = await _client
+          .openUrl(method, base.resolve(path))
+          .timeout(const Duration(seconds: 3));
+      request.followRedirects = false;
+      request.headers
+          .set(HttpHeaders.authorizationHeader, 'Bearer ${config.token}');
+      request.headers.contentType = ContentType.json;
+      if (body != null) {
+        final bytes = utf8.encode(jsonEncode(body));
+        request.contentLength = bytes.length;
+        request.add(bytes);
+      }
+      final response =
+          await request.close().timeout(const Duration(seconds: 3));
+      if (response.statusCode < 200 || response.statusCode >= 300)
+        throw ObserverTransportException(ObserverFailure.httpResponse,
+            status: response.statusCode);
+      final text = await utf8.decoder
+          .bind(response)
+          .join()
+          .timeout(const Duration(seconds: 3));
+      return text.isEmpty
+          ? {}
+          : Map<String, dynamic>.from(jsonDecode(text) as Map);
+    } on ObserverTransportException {
+      rethrow;
+    } on TimeoutException {
+      throw ObserverTransportException(ObserverFailure.timeout);
+    } on HandshakeException {
+      throw ObserverTransportException(ObserverFailure.tls);
+    } on SocketException {
+      throw ObserverTransportException(ObserverFailure.network);
+    } on HttpException {
+      throw ObserverTransportException(ObserverFailure.network);
+    } on FormatException {
+      throw ObserverTransportException(ObserverFailure.invalidResponse);
+    } on TypeError {
+      throw ObserverTransportException(ObserverFailure.invalidResponse);
+    } catch (_) {
+      throw ObserverTransportException(ObserverFailure.unexpected);
+    }
   }
 }
 
@@ -106,28 +135,44 @@ class JsonPendingStore implements PendingStore, RecoverablePendingStore {
           .toList();
       if (events.isEmpty) continue;
       final oldId = data['sessionId'] as String;
-      // Reopening only delivers metadata. The observer must report a restart gap;
-      // Flutter never resumes that frame or requests its prediction.
+      try {
+        await _replayFile(transport, file, data, events, oldId);
+      } on ObserverTransportException catch (error) {
+        // The companion rejected this history (e.g. its session log was removed),
+        // so retrying can never succeed. Keep it aside instead of blocking every
+        // later session; other failures are retried.
+        if (error.status != 409) rethrow;
+        final aside = Directory('${folder.path}/quarantined');
+        await aside.create(recursive: true);
+        await file.rename('${aside.path}/${file.uri.pathSegments.last}');
+      }
+    }
+  }
+
+  Future<void> _replayFile(ObserverTransport transport, File file,
+      Map<String, dynamic> data, List<Map<String, dynamic>> events,
+      String oldId) async {
+    // Reopening only delivers metadata. The observer must report a restart gap;
+    // Flutter never resumes that frame or requests its prediction.
+    await transport.request(
+        'POST', '/v1/sessions', {'sessionId': oldId, 'mode': data['mode']});
+    if (events.last['type'] != 'session_stopped') {
+      events.add({
+        'eventId': observerId(),
+        'sequence': (events.last['sequence'] as int) + 1,
+        'type': 'session_stopped',
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+        'reason': 'app_process_restart'
+      });
+      data['events'] = events;
+      await _write(file, data);
+    }
+    while (events.isNotEmpty) {
       await transport.request(
-          'POST', '/v1/sessions', {'sessionId': oldId, 'mode': data['mode']});
-      if (events.last['type'] != 'session_stopped') {
-        events.add({
-          'eventId': observerId(),
-          'sequence': (events.last['sequence'] as int) + 1,
-          'type': 'session_stopped',
-          'timestamp': DateTime.now().toUtc().toIso8601String(),
-          'reason': 'app_process_restart'
-        });
-        data['events'] = events;
-        await _write(file, data);
-      }
-      while (events.isNotEmpty) {
-        await transport.request(
-            'POST', '/v1/sessions/$oldId/events', events.first);
-        events.removeAt(0);
-        data['events'] = events;
-        await _write(file, data);
-      }
+          'POST', '/v1/sessions/$oldId/events', events.first);
+      events.removeAt(0);
+      data['events'] = events;
+      await _write(file, data);
     }
   }
 }

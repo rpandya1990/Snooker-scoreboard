@@ -26,7 +26,9 @@ class CapturedFrame:
     alignment_status: str
 
 class CaptureFailure(RuntimeError):
-    pass
+    def __init__(self,reason,details=None):
+        super().__init__(reason)
+        self.details=details or {}
 
 SHOWINFO=re.compile(r'^\[Parsed_showinfo(?:_\d+)?(?: @ [^\]]+)?\]\s+n:\s*(\d+)\s+.*?\bpts_time:\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)')
 
@@ -38,6 +40,22 @@ def parse_pts(line):
     if not math.isfinite(pts):
         raise CaptureFailure('invalid_media_timestamp')
     return index,pts
+
+def failure_marker(line):
+    """Map known FFmpeg failures to constants; never retain diagnostic text."""
+    normalized=line.casefold()
+    markers=(
+        ('camera_auth_failed',('401 unauthorized','403 forbidden')),
+        ('camera_session_limit',('453 not enough bandwidth','too many sessions','maximum number of sessions')),
+        ('camera_connection_failed',('connection refused','connection timed out','network is unreachable','no route to host')),
+        ('capture_filter_failed',('error parsing a filter description','error initializing filters','failed to configure output pad','error reinitializing filters','no such filter')),
+        ('capture_decoder_failed',('error while decoding','error decoding','decoder not found','error initializing decoder','no decoder found')),
+        ('capture_encoder_failed',('ff_frame_thread_encoder_init failed','error while opening encoder','error initializing output stream')),
+    )
+    for reason,phrases in markers:
+        if any(phrase in normalized for phrase in phrases):
+            return reason
+    return None
 
 class LiveFrameSource:
     def __init__(self,settings,source,recorded_file=False,process_factory=subprocess.Popen,
@@ -64,6 +82,10 @@ class LiveFrameSource:
         elif self._source.lower().startswith(('rtsp://','rtsps://')):
             input_options=['-rtsp_transport','tcp']
             target=self._source
+        elif re.fullmatch(r'udp://127\.0\.0\.1:\d{1,5}',self._source):
+            # Loopback relay from the recording process (single camera connection).
+            input_options=[]
+            target=self._source+'?fifo_size=1000000&overrun_nonfatal=1'
         else:
             raise CaptureFailure('invalid_source')
         filters=[]
@@ -74,7 +96,7 @@ class LiveFrameSource:
         filters += [f"select=isnan(prev_selected_t)+gte(t-prev_selected_t\\,{interval})",
             f'scale={self.settings.width}:{self.settings.height}:force_original_aspect_ratio=decrease',
             f'pad={self.settings.width}:{self.settings.height}:(ow-iw)/2:(oh-ih)/2', 'showinfo']
-        return ['ffmpeg','-nostdin','-hide_banner','-loglevel','info','-copyts',*input_options,'-i',target,
+        return ['ffmpeg','-nostdin','-nostats','-hide_banner','-loglevel','info','-copyts',*input_options,'-i',target,
             '-map','0:v:0','-an','-vf',','.join(filters),'-fps_mode','passthrough','-pix_fmt','rgb24',
             '-f','rawvideo','pipe:1']
 
@@ -95,6 +117,7 @@ class LiveFrameSource:
             raw=bytearray()
             lines=bytearray()
             timestamps={}
+            failure_reason=None
             index=0
             first_pts=None
             anchor=None
@@ -116,13 +139,18 @@ class LiveFrameSource:
                         while b'\n' in lines:
                             line,_,remaining=lines.partition(b'\n')
                             lines=bytearray(remaining)
-                            parsed=parse_pts(line.decode('ascii',errors='ignore'))
-                            if parsed:
-                                timestamps[parsed[0]]=parsed[1]
+                            # FFmpeg progress can prefix showinfo after a carriage return.
+                            # Keep the anchored parser, but parse each logical terminal line.
+                            for logical_line in line.split(b'\r'):
+                                decoded=logical_line.decode('ascii',errors='ignore')
+                                marker=failure_marker(decoded)
+                                if marker is not None:
+                                    failure_reason=marker
+                                parsed=parse_pts(decoded)
+                                if parsed:
+                                    timestamps[parsed[0]]=parsed[1]
                         if len(lines)>16384:
                             lines.clear()
-                    if len(raw)>frame_bytes*4 or len(timestamps)>16:
-                        raise CaptureFailure('capture_backlog')
                 while len(raw)>=frame_bytes and index in timestamps:
                     pts=timestamps.pop(index)
                     if last_pts is not None and pts <= last_pts:
@@ -142,12 +170,16 @@ class LiveFrameSource:
                     last_progress=receipt_mono
                     yield CapturedFrame(frame,self.epoch,received.isoformat(),receipt_mono,
                         'estimated' if self.settings.capture_uncertainty_ms is not None else 'unknown')
+                # Drain all complete pairs before assessing retained backlog; a single
+                # bounded read may contain several matching frame/metadata records.
+                if len(raw)>frame_bytes*4 or len(timestamps)>16:
+                    raise CaptureFailure('capture_backlog',{'bufferedRgbBytes':len(raw),'queuedPresentationTimestamps':len(timestamps),'frameBytes':frame_bytes})
                 if not selector.get_map():
                     returncode=process.poll()
                     if raw or timestamps:
                         raise CaptureFailure('incomplete_sample')
                     if returncode not in (None,0) or not self._recorded_file:
-                        raise CaptureFailure('unexpected_source_termination')
+                        raise CaptureFailure(failure_reason or 'unexpected_source_termination')
                     return
         except CaptureFailure:
             raise

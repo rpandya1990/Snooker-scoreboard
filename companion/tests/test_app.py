@@ -37,6 +37,7 @@ class AppBootstrapTests(unittest.TestCase):
             manager.assert_not_called()
             server.assert_not_called()
     def test_retired_tools_not_present_in_installed_package(self):
-        for name in ('replay','dataset','recorded_dataset','probe','services.evaluation','services.offline_replay','services.datasets','clients.probe'):
+        # 'dataset' returned 2026-10-29 as the detector training-frame builder (user request).
+        for name in ('replay','recorded_dataset','probe','services.evaluation','services.offline_replay','services.datasets','clients.probe'):
             with self.subTest(name=name):
                 self.assertIsNone(importlib.util.find_spec('ai_scoring.'+name))

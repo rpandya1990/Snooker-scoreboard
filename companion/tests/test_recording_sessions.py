@@ -8,6 +8,7 @@ from ai_scoring.services.sessions import SessionManager
 class FakeRecorder:
     def __init__(self,store,config,source,**kwargs):
         self.store=store
+        self.relay_port=kwargs.get('relay_port')
         self.started=0
         self.closed=Event()
         self.reason=None
@@ -34,6 +35,27 @@ class RecordingSessionTests(unittest.TestCase):
     def tearDown(self):
         self.manager.close()
         self.directory.cleanup()
+    def test_tracking_reads_the_recorders_relay_instead_of_a_second_camera_stream(self):
+        from ai_scoring.config import InferenceConfig
+        sources=[]
+        class Observer:
+            def __init__(self,service,settings,source,**kwargs):sources.append((source,kwargs))
+            def start(self):pass
+            def close(self,reason='shutdown'):pass
+        def recorder(*args,**kwargs):
+            made=FakeRecorder(*args,**kwargs)
+            made.relay_source=f'udp://127.0.0.1:{made.relay_port}'
+            self.recorders.append(made);return made
+        manager=SessionManager(Config(self.directory.name,Mode.DRY_RUN,camera_url='rtsp://fake:fake@localhost/stream',
+            recording=RecordingConfig(True,60,10000,100,5),inference=InferenceConfig(enabled=True,inference_trigger='shot')),
+            clock=lambda:self.now,recording_factory=recorder,inference_factory=Observer,watchdog_seconds=.01)
+        try:
+            manager.open({'sessionId':'relay','mode':'dry-run'})
+            port=self.recorders[-1].relay_port
+            self.assertIsInstance(port,int)
+            self.assertEqual(sources,[(f'udp://127.0.0.1:{port}',{'recorded_file':False,'clock':manager.clock})])
+        finally:
+            manager.close()
     def test_lease_expiry_stops_without_an_api_request(self):
         self.manager.open(self.metadata)
         self.now+=timedelta(seconds=31)

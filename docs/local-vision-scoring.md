@@ -25,13 +25,17 @@ Ollama's [vision API](https://docs.ollama.com/capabilities/vision) accepts image
 
 - Only numeric loopback HTTP endpoints with an explicit port are accepted, such as `http://127.0.0.1:11434`. Proxies, redirects, cloud models and external endpoints are rejected. The model must already be installed and advertise vision support; runtime code does not pull models.
 - The first two frames warm the window without a model call. Baseline confirmation requires at least three distinct chronological, settled witnesses, all 15 initial reds and six colours, adequate confidence, visibility and pocket calibration. It does not initialise an arbitrary mid-clearance table.
-- Candidate pots/respots require ordered evidence and referenced input frames. Missing balls alone do not establish a pot. Unknown refs/types/counts, duplicate or overlapping events, uncertainty and unsupported conditions abstain.
+- Candidate pots/respots require ordered evidence and referenced input frames. In periodic mode, missing balls alone do not establish a pot; shot mode instead uses confirmed settled-table inventories (see [shot-triggered inference](shot-triggered-inference.md)). Unknown refs/types/counts, duplicate or overlapping events, uncertainty and unsupported conditions abstain.
 - Event timestamps come from referenced input frames, not model-generated clocks. The adapter preserves table baseline across run boundaries and resets on physical frame changes/discontinuity.
 - Fixed versions, model digest, prompt, calibration, actual sampling and latency remain in provenance. Original frozen score-entry predictions are never replaced by later results.
 
 ## Calibration
 
 Use a protected calibration JSON containing a nonempty `version`, six normalized `[x,y]` pocket coordinates and a positive `pocketRadius` no greater than 0.25. Coordinates must match the image after any ROI crop. Missing calibration suppresses scoring, including zero-point predictions.
+
+## Shot-triggered inference
+
+Use the opt-in [shot-triggered mode](shot-triggered-inference.md) to capture frequently while scheduling VLM calls after motion settles. The periodic mode remains available. Real throughput and event recall require gameplay validation.
 
 ## Live dry-run
 

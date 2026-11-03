@@ -63,6 +63,21 @@ class RecordingTests(unittest.TestCase):
         self.assertNotIn(self.source,json.dumps(self.store.records))
         self.assertNotIn(self.source,repr(self.worker.health))
         self.assertEqual(self.store.records[-1]['payload']['alignmentStatus'],'unknown')
+    def test_optional_loopback_relay_shares_the_single_camera_connection(self):
+        self.assertIsNone(self.worker.relay_source)
+        relayed=RecordingWorker(self.store,self.config,self.source,clock=lambda:self.now,monotonic=lambda:12.0,
+            process_factory=self.factory,disk_usage=lambda _:SimpleNamespace(free=100000),relay_port=40123)
+        self.assertIsNone(relayed.relay_source)
+        relayed.start(background=False)
+        command,_=self.calls[-1]
+        self.assertEqual(command.count('-i'),1)
+        self.assertEqual(command[-1],'udp://127.0.0.1:40123?pkt_size=1316')
+        self.assertEqual(command[command.index('mpegts')-3:command.index('mpegts')],['-c','copy','-f'])
+        self.assertEqual(relayed.relay_source,'udp://127.0.0.1:40123')
+        relayed.close()
+        self.assertIsNone(relayed.relay_source)
+        with self.assertRaises(ValueError):
+            RecordingWorker(self.store,self.config,self.source,relay_port=70000)
     def make_segment(self,closed=True):
         directory=self.store.path.parent/'video'
         name=self.worker._prefix+'000000.mkv'

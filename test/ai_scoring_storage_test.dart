@@ -40,6 +40,22 @@ class LostStopAckTransport implements ObserverTransport {
   }
 }
 
+class RejectingTransport implements ObserverTransport {
+  final String rejectedSession;
+  final List<String> delivered = [];
+  RejectingTransport(this.rejectedSession);
+  @override
+  Future<Map<String, dynamic>> request(
+      String method, String path, Map<String, dynamic>? body) async {
+    if (path == '/v1/sessions/$rejectedSession/events') {
+      throw ObserverTransportException(ObserverFailure.httpResponse,
+          status: 409);
+    }
+    if (path.endsWith('/events')) delivered.add(body!['eventId'] as String);
+    return {};
+  }
+}
+
 void main() {
   test(
       'restart retains unsent session on failure then retries original event exactly',
@@ -97,6 +113,30 @@ void main() {
     expect(transport.applied, {'stop-original'});
     await fresh.replay(transport);
     expect(transport.attempted.length, 2);
+  });
+  test('history the companion rejects is set aside and later files still replay',
+      () async {
+    final root = await Directory.systemTemp.createTemp('observer-rejected');
+    addTearDown(() => root.delete(recursive: true));
+    const config = AiConfig(mode: AiMode.dryRun);
+    await JsonPendingStore('a-rejected', config, directory: () async => root)
+        .save([
+      {'eventId': 'lost', 'sequence': 3, 'type': 'session_stopped'}
+    ]);
+    await JsonPendingStore('b-good', config, directory: () async => root).save([
+      {'eventId': 'kept', 'sequence': 1, 'type': 'session_stopped'}
+    ]);
+    final transport = RejectingTransport('a-rejected');
+    await JsonPendingStore('new', config, directory: () async => root)
+        .replay(transport);
+    expect(transport.delivered, ['kept']);
+    expect(
+        await File('${root.path}/ai_scoring/quarantined/a-rejected-pending.json')
+            .readAsString(),
+        contains('lost'));
+    expect(
+        File('${root.path}/ai_scoring/a-rejected-pending.json').existsSync(),
+        isFalse);
   });
   test('legacy pending camera alias is ignored and new files omit it',
       () async {

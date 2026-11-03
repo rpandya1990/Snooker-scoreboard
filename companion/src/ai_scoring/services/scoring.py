@@ -1,11 +1,12 @@
 """Durable session orchestration; entered points never alter rules/inference."""
 import copy
+import math
 from datetime import datetime, timedelta, timezone
 from threading import RLock
 from uuid import uuid4
 from ai_scoring.config import Mode
 from ai_scoring.dao.jsonl import IdentityConflict
-from ai_scoring.domain.scoring import SnookerAccumulator, PotObservation
+from ai_scoring.domain.scoring import SnookerAccumulator, PotObservation, CLEARANCE, interpretable_table
 
 def utc_now():
     return datetime.now(timezone.utc)
@@ -17,6 +18,8 @@ def timestamp(value):
     if parsed.tzinfo is None:
         raise ValueError('timestamp requires timezone')
     return parsed
+
+PERSISTENT_REASONS = frozenset({'exposure_time_unresolved'})
 
 class EventConflict(ValueError):
     pass
@@ -39,8 +42,10 @@ class ScoringService:
         self.events = {}
         self.observed_through = None
         self._last_scoring_at = None
+        self._last_activity_started_at = None
         self.activity_version = 0
         self.epoch = str(uuid4())
+        self._pending_work = {}
         self.reasons = {'table_not_initialised'}
         records = store.records
         for record in records:
@@ -81,23 +86,39 @@ class ScoringService:
         elif kind == 'visual_watermark':
             self.observed_through=payload['observedThrough']
         elif kind == 'discontinuity':
+            self._pending_work.clear()
             self.reasons.add(payload['reason'])
             self.epoch = payload['epoch']
 
     def _apply(self, event):
         kind = event['type']
         if kind == 'frame_started':
+            self._pending_work.clear()
             self.frame_id, self.run_id = event['frameId'], event['runId']
             self.rules = SnookerAccumulator(event.get('reds', 15))
             self.reasons = {'table_not_initialised'}
             self.observed_through = None
             self._last_scoring_at = None
+            self._last_activity_started_at = None
             self.stopped = False
         elif kind == 'baseline_confirmed':
-            self.reasons.discard('table_not_initialised')
+            # A settled interpretable table fixes physical state from what is visible,
+            # so earlier observation failures clear; ongoing conditions remain.
+            self.reasons &= PERSISTENT_REASONS
+            if 'reds' in event:
+                self.rules = SnookerAccumulator(event['reds'])
+                self.rules.clearance_index = event['clearanceIndex']
+                self.rules.new_visit()
+            if event.get('midFrame'):
+                # Points scored earlier in this visit were never observed.
+                self.reasons.add('run_started_before_baseline')
             self.observed_through = event['observedThrough']
         elif kind == 'break_committed':
+            if self._pending_work:
+                self.reasons.add('boundary_unsynchronised')
+                self._pending_work.clear()
             self.entries[event['entryId']] = copy.deepcopy(event)
+            self.reasons.discard('run_started_before_baseline')
             self.run_id = event['nextRunId']
             self._run_started_at=event['committedAt']
             self.rules.new_visit()
@@ -112,6 +133,7 @@ class ScoringService:
                 for entry in self.entries.values():
                     entry['labelStatus'] = 'correction_affected'
         elif kind in ('frame_ended', 'session_stopped'):
+            self._pending_work.clear()
             self.frame_id = self.run_id = None
             self.rules = None
             if kind == 'session_stopped':
@@ -174,7 +196,10 @@ class ScoringService:
             if event['type'] == 'break_committed':
                 pred = self.predictions.get(event.get('predictionId'))
                 available = bool(pred and pred['status'] == 'available')
-                boundary_uncertain = (('clockUncertaintyMs' in event and (event['clockUncertaintyMs'] is None or event['clockUncertaintyMs'] > 500))
+                boundary_uncertain = (bool(self._pending_work)
+                                      or bool(pred and pred.get('activityVersion')!=self.activity_version)
+                                      or bool(self._last_activity_started_at and timestamp(self._last_activity_started_at)>timestamp(event['inputStartedAt']))
+                                      or ('clockUncertaintyMs' in event and (event['clockUncertaintyMs'] is None or event['clockUncertaintyMs'] > 500))
                                       or bool(self._last_scoring_at and timestamp(self._last_scoring_at) > timestamp(event['inputStartedAt'])))
                 payload['comparison'] = {'predictionId': event.get('predictionId'), 'predictedPoints': pred['points'] if pred else None,
                     'submittedPoints': event['submittedPoints'], 'agreement': pred['points'] == event['submittedPoints'] if available else None,
@@ -185,13 +210,18 @@ class ScoringService:
             self._replay(record)
             return ack
 
-    def confirm_baseline(self, observed_through):
+    def confirm_baseline(self, observed_through, reds=15, colours=CLEARANCE):
         timestamp(observed_through)
+        colours = frozenset(colours)
+        if not interpretable_table(reds, colours):
+            raise ValueError('uninterpretable baseline table')
         with self._lock:
             if self.mode == Mode.OFF or not self.rules:
                 raise EventConflict('no observing frame')
             # Internal adapter command, never accepted as a public client event.
-            event = {'eventId': str(uuid4()), 'sequence': self.sequence, 'type': 'baseline_confirmed', 'observedThrough': observed_through}
+            event = {'eventId': str(uuid4()), 'sequence': self.sequence, 'type': 'baseline_confirmed', 'observedThrough': observed_through,
+                     'reds': reds, 'clearanceIndex': 0 if reds else len(CLEARANCE) - len(colours),
+                     'midFrame': not (reds == 15 and len(colours) == len(CLEARANCE))}
             record = self._record('baseline', 'baseline:' + event['eventId'], event)
             self.store.append(record)
             self._apply(event)
@@ -233,7 +263,7 @@ class ScoringService:
             if self.mode == Mode.OFF or not self.rules:
                 raise EventConflict('no observing frame')
             now = self.clock()
-            reasons = sorted(self.reasons | self.rules.quality_reasons)
+            reasons = sorted(self.reasons | self.rules.quality_reasons | self._pending_reasons())
             payload = {'predictionId': str(uuid4()), 'frameId': self.frame_id, 'runId': self.run_id,
                 'status': 'unavailable' if reasons else 'available', 'points': None if reasons else self.rules.points,
                 'createdAt': now.isoformat(), 'observedThrough': self.observed_through,
@@ -253,16 +283,100 @@ class ScoringService:
             matching = [p for p in self.predictions.values() if p['frameId'] == self.frame_id and p['runId'] == self.run_id]
             if not matching:
                 return {'status': 'unavailable', 'points': None, 'frameId': self.frame_id, 'runId': self.run_id,
-                        'lastAppliedEventSequence': self.sequence, 'activityVersion': self.activity_version, 'qualityReasons': sorted(self.reasons or {'no_prediction'})}
+                        'lastAppliedEventSequence': self.sequence, 'activityVersion': self.activity_version, 'qualityReasons': sorted((self.reasons | self._pending_reasons()) or {'no_prediction'})}
             payload = copy.deepcopy(matching[-1])
-            reasons = self.reasons | (self.rules.quality_reasons if self.rules else set())
+            reasons = self.reasons | self._pending_reasons() | (self.rules.quality_reasons if self.rules else set())
             if timestamp(payload['expiresAt']) <= self.clock():
                 reasons = reasons | {'stale'}
+            if payload.get('activityVersion') != self.activity_version:
+                reasons = reasons | {'new_activity'}
             if payload['observedThrough'] != self.observed_through:
                 reasons = reasons | {'new_activity'}
             if reasons:
                 payload.update(status='unavailable', points=None, qualityReasons=sorted(reasons))
             return payload
+
+    def _pending_reasons(self):
+        return {work['reason'] for work in self._pending_work.values()}
+
+    def _context_matches(self,context,epoch):
+        return bool(self.rules and not self.stopped and self.frame_id==context.frame_id and self.run_id==context.run_id and self.epoch==epoch)
+
+    def _work_matches(self,work_id,context,epoch):
+        work=self._pending_work.get(work_id)
+        return bool(work and self._context_matches(context,epoch) and
+                    (work['frameId'],work['runId'],work['epoch'])==(context.frame_id,context.run_id,epoch))
+
+    @property
+    def baseline_initialized(self):
+        with self._lock:
+            return bool(self.rules and 'table_not_initialised' not in self.reasons)
+
+    def is_inference_pending(self,work_id,context,epoch):
+        with self._lock:
+            return self._work_matches(work_id,context,epoch)
+
+    def cancel_unconfirmed_baseline(self,context,epoch,work_id=None):
+        """Atomic startup-motion cancellation; never resets confirmed rules state."""
+        with self._lock:
+            if not self._context_matches(context,epoch) or self.baseline_initialized:
+                return False
+            if work_id and self._work_matches(work_id,context,epoch):
+                del self._pending_work[work_id]
+            return True
+
+    def mark_inference_pending(self,context,epoch,reason='shot_in_progress',work_id=None):
+        """Immediately suppress cached suggestions before capture/model work starts."""
+        if reason not in ('shot_in_progress','inference_pending','baseline_inference_pending'):
+            raise ValueError('unsupported pending reason')
+        with self._lock:
+            if not self._context_matches(context,epoch): return None
+            if work_id is not None:
+                return work_id if self._work_matches(work_id,context,epoch) else None
+            token=str(uuid4())
+            self._pending_work[token]={'frameId':context.frame_id,'runId':context.run_id,'epoch':epoch,'reason':reason}
+            self.activity_version+=1
+            self._last_activity_started_at=self.clock().isoformat()
+            return token
+
+    def finish_inference_pending(self,work_id,context,epoch,resolved=True,reason=None):
+        with self._lock:
+            if not self._work_matches(work_id,context,epoch): return False
+            del self._pending_work[work_id]
+            if not resolved:
+                self.visual_failure(reason or 'unresolved_visual_work',discontinue=False)
+            return True
+
+    def advance_verified_quiet(self,context,epoch,frame,ttl_seconds=3):
+        """Controller-only renewal from continuously captured, verified quiet frames."""
+        with self._lock:
+            if not self._context_matches(context,epoch) or self._pending_work or self.reasons or self.rules.quality_reasons:
+                return False
+            uncertainty=frame.utc_uncertainty_ms
+            if type(uncertainty) not in (int,float) or not math.isfinite(uncertainty) or uncertainty<0:
+                return False
+            through=timestamp(frame.timestamp)
+            if through>timestamp(context.cutoff) or (self.observed_through and through<=timestamp(self.observed_through)):
+                return False
+            if (self.clock()-through).total_seconds()>ttl_seconds or (through-self.clock()).total_seconds()>uncertainty/1000:
+                return False
+            latest=next((p for p in reversed(list(self.predictions.values())) if p['frameId']==self.frame_id and p['runId']==self.run_id),None)
+            if latest is None:
+                # A clean committed visit preserves physical table/rules state.
+                # Reuse only model provenance, never the prior run's point total.
+                latest=next((p for p in reversed(list(self.predictions.values())) if p['frameId']==self.frame_id),None)
+            if latest is None: return False
+            if latest['runId']==self.run_id and latest.get('activityVersion')==self.activity_version and latest.get('status')=='available' and (timestamp(latest['expiresAt'])-self.clock()).total_seconds()>ttl_seconds/2:
+                return True
+            record=self._record('visual_watermark','quiet:'+str(uuid4()),{
+                'observedThrough':frame.timestamp,'frameId':self.frame_id,'runId':self.run_id,
+                'observationEpoch':epoch,'source':'continuously_verified_quiet_capture',
+                'modelReferencePredictionId':latest['predictionId'],
+                'mediaTime':frame.media_time,'utcUncertaintyMs':uncertainty})
+            self.store.append(record)
+            self.observed_through=frame.timestamp
+            self.publish_prediction(latest['modelVersion'],ttl_seconds,latest,None)
+            return True
 
     def visual_context(self, cutoff):
         """Score-free snapshot tagged with the currently owned observation epoch."""
@@ -281,9 +395,12 @@ class ScoringService:
                 self.store.append(record)
                 self.reasons.add(reason)
 
-    def apply_visual_result(self, result, context, epoch, frame, metadata, latency_ms, ttl_seconds):
+    def apply_visual_result(self, result, context, epoch, frame, metadata, latency_ms, ttl_seconds, work_id=None):
         """Accept one ordered adapter result atomically against its capture generation."""
         with self._lock:
+            if work_id is not None and not self._work_matches(work_id,context,epoch):
+                self.visual_diagnostic(context,'late_or_resolved_inference_work')
+                return False
             if self.frame_id!=context.frame_id or self.run_id!=context.run_id or self.epoch!=epoch:
                 self.store.append(self._record('visual_diagnostic','diagnostic:'+str(uuid4()),
                     {'reason':'late_or_changed_boundary','frameId':context.frame_id,'runId':context.run_id,
@@ -301,8 +418,12 @@ class ScoringService:
                     if reason not in ('window_incomplete','table_not_initialised'):
                         self.visual_failure(reason,discontinue=False)
             if result.baseline_reds is not None and 'table_not_initialised' in self.reasons:
-                if result.baseline_reds == 15 and self.rules.reds == 15 and self.rules.points == 0:
-                    self.confirm_baseline(frame.timestamp)
+                # Adapters without a colour inventory may only confirm a fresh full table.
+                colours = result.baseline_colours
+                if colours is None and result.baseline_reds == 15:
+                    colours = CLEARANCE
+                if colours is not None and self.rules.points == 0 and interpretable_table(result.baseline_reds, colours):
+                    self.confirm_baseline(frame.timestamp, result.baseline_reds, colours)
                 else:
                     self.visual_failure('physical_baseline_unresolved',discontinue=False)
             for observation in result.observations:
@@ -323,10 +444,25 @@ class ScoringService:
                 self.observed_through=result.processed_through
             else:
                 self.visual_failure('missing_processed_watermark',discontinue=False)
+            if work_id is not None:
+                self.finish_inference_pending(work_id,context,epoch)
             self.publish_prediction(metadata.get('modelVersion','unconfigured'),ttl_seconds,metadata,latency_ms)
             return True
 
-    def visual_diagnostic(self, context, reason):
+    def visual_diagnostic(self, context, reason, baseline_summary=None, provenance=None):
         with self._lock:
-            self.store.append(self._record('visual_diagnostic','diagnostic:'+str(uuid4()),
-                {'reason':reason,'frameId':context.frame_id,'runId':context.run_id}))
+            payload={'reason':reason,'frameId':context.frame_id,'runId':context.run_id}
+            if baseline_summary is not None:
+                from ai_scoring.domain.baseline_diagnostics import sanitize_summary
+                import re
+                payload['baselineSummary']=sanitize_summary(baseline_summary)
+                provenance=provenance or {}
+                for key in ('modelVersion','promptVersion','adapterVersion'):
+                    value=provenance.get(key)
+                    if isinstance(value,str) and re.fullmatch(r'[A-Za-z0-9_.:-]{1,160}',value):
+                        payload[key]=value
+                latency=provenance.get('inferenceLatencyMs')
+                if type(latency) is int and 0<=latency<=86400000:
+                    payload['inferenceLatencyMs']=latency
+                payload['observationEpoch']=self.epoch
+            self.store.append(self._record('visual_diagnostic','diagnostic:'+str(uuid4()),payload))

@@ -13,6 +13,7 @@ class InferenceJob:
     context: object
     epoch: str
     queued_monotonic: float
+    work_id: str | None = None
 
 class LiveObserver:
     def __init__(self,service,settings,source,recorded_file=False,adapter=None,
@@ -34,11 +35,20 @@ class LiveObserver:
         self._adapter_epoch=None
         self._unknown_flagged_frame=None
         self._state_lock=Lock()
+        self._tracking=settings.inference_trigger=='shot'
+        self._generation=None
+        self._work_id=None
+        self._last_event=None
+        self._last_baseline_logged=None
+
 
     @property
     def health(self):
-        return {'status':self._status,'reason':self._reason,'model':self.settings.model,
+        health={'status':self._status,'reason':self._reason,'model':self.settings.model,
                 'queuedJobs':self._queue.qsize()}
+        if self._tracking:
+            health.update(trackingState=self._last_event,changePending=self._work_id is not None)
+        return health
 
     def start(self):
         if not self.settings.enabled or self._status!='idle':
@@ -76,16 +86,69 @@ class LiveObserver:
         context=self.service.visual_context(captured.frame.timestamp)
         if context is None:
             return
-        job=InferenceJob(captured,context[0],context[1],self._monotonic())
+        if self._tracking:
+            self._track(captured,context)
+        else:
+            self._enqueue(InferenceJob(captured,context[0],context[1],self._monotonic()))
+
+    def _enqueue(self,job):
         try:
             self._queue.put_nowait(job)
+            return True
         except Full:
             self._failure('inference_queue_dropped_window')
+            jobs=[job]
             while True:
-                try:
-                    self._queue.get_nowait()
-                except Empty:
-                    break
+                try:jobs.append(self._queue.get_nowait())
+                except Empty:break
+            for pending in jobs:self._resolve_job(pending,False,'inference_queue_dropped_window')
+            return False
+
+    def _resolve_job(self,job,resolved,reason=None):
+        if job.work_id:
+            self.service.finish_inference_pending(job.work_id,job.context,job.epoch,resolved=resolved,reason=reason)
+
+    def _track(self,captured,snapshot):
+        """Read every sampled frame; the adapter accepts only stable clear changes."""
+        context,epoch=snapshot
+        adapter=self._adapter
+        if adapter is None:
+            return
+        if (context.frame_id,context.run_id,epoch)!=self._generation:
+            # A committed entry or failure moved the boundary; old work is void.
+            self._work_id=None
+            if self._generation is not None and self._generation[2]!=epoch:
+                if self.service.baseline_initialized:
+                    adapter.reset_epoch()
+                else:
+                    adapter.reset_baseline_attempt()
+            self._generation=(context.frame_id,context.run_id,epoch)
+        event,result=adapter.track(captured.frame,context)
+        self._last_event=event
+        summary=adapter.last_baseline_diagnostic
+        if summary is not None:
+            adapter.last_baseline_diagnostic=None
+            # Log a rejected starting table once per distinct reading, not per frame.
+            key=(summary.get('reds'),tuple(summary.get('coloursPresent',())))
+            if key!=self._last_baseline_logged:
+                self._last_baseline_logged=key
+                self.service.visual_diagnostic(context,'baseline_check',summary,adapter.metadata)
+        if event=='diverging' and self._work_id is None and self.service.baseline_initialized:
+            # Hide the previous suggestion while a possible change settles.
+            self._work_id=self.service.mark_inference_pending(context,epoch,'shot_in_progress')
+        elif event=='steady':
+            if self._work_id is not None:
+                self.service.finish_inference_pending(self._work_id,context,epoch,resolved=True)
+                self._work_id=None
+            if self.service.baseline_initialized:
+                self.service.advance_verified_quiet(context,epoch,captured.frame,self.settings.prediction_ttl_seconds)
+        elif result is not None:
+            work,self._work_id=self._work_id,None
+            try:
+                self.service.apply_visual_result(result,context,epoch,captured.frame,adapter.metadata,0,
+                    self.settings.prediction_ttl_seconds,work_id=work)
+            except Exception:
+                self._failure('visual_result_rejected')
 
     def _read(self):
         try:
@@ -123,11 +186,15 @@ class LiveObserver:
     def _infer(self):
         try:
             if self._adapter is None:
-                from ai_scoring.services.ollama_adapter import create
+                if self._tracking:
+                    from ai_scoring.services.inventory_adapter import create
+                else:
+                    from ai_scoring.services.ollama_adapter import create
                 adapter=create({'model':self.settings.model,'endpoint':self.settings.endpoint,
                     'windowFrames':self.settings.window_frames,'maxFrameGapSeconds':self.settings.max_frame_gap_seconds,
                     'minConfidence':self.settings.min_confidence,'seed':0,'timeoutSeconds':self.settings.model_timeout_seconds,
-                    'calibration':self.settings.calibration or {}})
+                    'calibration':self.settings.calibration or {},'stableSeconds':self.settings.stable_seconds,'ballModel':self.settings.ball_model,
+                    'debugFrameDirectory':str(self.service.store.path.parent/'inference-frames') if self.settings.save_inference_frames else None})
                 with self._state_lock:
                     if not self._done.is_set():
                         self._adapter=adapter
@@ -164,6 +231,15 @@ class LiveObserver:
             pass
 
     def process(self,job):
+        try:
+            self._process(job)
+        finally:
+            # Accepted batches resolve atomically inside apply_visual_result. Every
+            # remaining current token represents an unresolved observation window.
+            if job.work_id:
+                self._resolve_job(job,False,'shot_inference_unresolved')
+
+    def _process(self,job):
         if self._done.is_set():
             return
         if not self._current_job(job):
@@ -202,8 +278,12 @@ class LiveObserver:
             self._failure('source_timestamp_stale')
             return
         try:
+            baseline_summary=getattr(self._adapter,'last_baseline_diagnostic',None)
+            if baseline_summary is not None:
+                provenance=dict(self._adapter.metadata,inferenceLatencyMs=round((ended-started)*1000))
+                self.service.visual_diagnostic(job.context,'baseline_check',baseline_summary,provenance)
             self.service.apply_visual_result(result,job.context,job.epoch,job.captured.frame,
-                self._adapter.metadata,round((ended-started)*1000),self.settings.prediction_ttl_seconds)
+                self._adapter.metadata,round((ended-started)*1000),self.settings.prediction_ttl_seconds,work_id=job.work_id)
         except Exception:
             self._failure('visual_result_rejected')
 
