@@ -26,6 +26,12 @@ companion/.venv/bin/python -m ai_scoring.app --data-directory /tmp/snooker-ai-da
 
 For LAN access specify a LAN bind address. HTTP requires no certificate; optional HTTPS uses both `--cert` and `--key` and a certificate trusted by the client. Plain HTTP exposes the pairing token and scoring traffic to the network; use it only on your trusted LAN. Keep token/camera credentials out of source, examples, logs, and datasets. The camera URL belongs in protected service-side configuration only; Flutter sends no camera configuration.
 
+## Shot-triggered observation
+
+For model-based ball reading in shot mode, install the optional runtime (`companion/.venv/bin/python -m pip install './companion[model]'`) and pass `--ball-model <file.onnx>`; see the shot-mode guide.
+
+Opt into `--inference-trigger shot` to track every frame with local colour-blob ball detection (no model); table inventories that stay stable are compared to derive pots and respots. See [setup and manual checks](../docs/shot-triggered-inference.md). Pending evidence suppresses prior suggestions; overload and late results remain explicit. Periodic mode remains the default.
+
 ## API and records
 
 All endpoints require `Authorization: Bearer <token>`. POST bodies are JSON objects (maximum 64 KiB). Endpoints match the approved design:

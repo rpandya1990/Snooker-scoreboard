@@ -19,6 +19,10 @@ def main(argv=None):
     parser.add_argument('--inference-enabled', action='store_true')
     parser.add_argument('--model')
     parser.add_argument('--ollama-endpoint', default='http://127.0.0.1:11434')
+    parser.add_argument('--inference-trigger',choices=('periodic','shot'),default='periodic')
+    parser.add_argument('--ball-model',type=Path,help='Shot mode: exported ONNX ball detector (needs the companion [model] extra); default uses the colour rules')
+    parser.add_argument('--stable-seconds',type=float,default=.5,help='Shot mode: how long a changed table must read identically before it is accepted')
+    parser.add_argument('--save-inference-frames',action='store_true',help='Debug: keep each model input frame and reading in the private session folder')
     parser.add_argument('--sample-fps', type=float, default=1.0)
     parser.add_argument('--inference-width', type=int, default=768)
     parser.add_argument('--inference-height', type=int, default=432)
@@ -39,6 +43,8 @@ def main(argv=None):
     parser.add_argument('--recording-total-bytes', type=int)
     parser.add_argument('--recording-min-free-bytes', type=int)
     parser.add_argument('--segment-seconds', type=float)
+    parser.add_argument('--build-dataset',action='store_true',help='After each recorded session, extract pre-labelled training frames into <data-directory>/dataset')
+    parser.add_argument('--dataset-every-seconds',type=float,default=2.0)
     parser.add_argument('--recorded-source', type=Path, help='Explicit local-file recording input for development; no camera')
     args = parser.parse_args(argv)
     if args.mode == Mode.OFF:
@@ -54,13 +60,18 @@ def main(argv=None):
         import json
         calibration=json.loads(args.calibration_file.read_text()) if args.calibration_file else None
         inference=InferenceConfig(enabled=args.inference_enabled,model=args.model,endpoint=args.ollama_endpoint,
-            sample_fps=args.sample_fps,width=args.inference_width,height=args.inference_height,roi=tuple(args.roi) if args.roi else None,
+            sample_fps=args.sample_fps,inference_trigger=args.inference_trigger,
+            
+            stable_seconds=args.stable_seconds,ball_model=str(args.ball_model.resolve()) if args.ball_model else None,save_inference_frames=args.save_inference_frames,width=args.inference_width,height=args.inference_height,roi=tuple(args.roi) if args.roi else None,
             capture_timeout_seconds=args.capture_timeout_seconds,job_freshness_seconds=args.job_freshness_seconds,queue_size=args.inference_queue_size,
             prediction_ttl_seconds=args.prediction_ttl_seconds,max_frame_gap_seconds=args.max_frame_gap_seconds,
             model_timeout_seconds=args.model_timeout_seconds,window_frames=args.window_frames,min_confidence=args.min_confidence,
             capture_uncertainty_ms=args.capture_uncertainty_ms,max_capture_uncertainty_ms=args.max_capture_uncertainty_ms,calibration=calibration)
         config = Config(args.data_directory, Mode(args.mode),
-            camera_url=os.environ.get("AI_SCORING_CAMERA_URL"),recording=recording,recorded_source=args.recorded_source,inference=inference)
+            camera_url=os.environ.get("AI_SCORING_CAMERA_URL"),recording=recording,recorded_source=args.recorded_source,inference=inference,
+            dataset_every_seconds=args.dataset_every_seconds if args.build_dataset else None)
+        if args.ball_model is not None and not args.ball_model.is_file():
+            parser.error('ball model file not found')
     except (ValueError,OSError):
         parser.error("invalid recording/inference configuration; check explicit model, budgets, local endpoint and calibration")
     context=None

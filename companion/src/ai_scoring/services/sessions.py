@@ -1,6 +1,6 @@
 """One camera lease; session metadata and accepted events survive process restarts."""
 from datetime import timedelta
-from threading import RLock, Event, Thread
+from threading import RLock, Event, Thread, Lock
 from ai_scoring.config import Mode
 from ai_scoring.clients.recording import RecordingWorker, purge_expired_sessions
 from ai_scoring.services.live_observer import LiveObserver
@@ -8,6 +8,12 @@ import time
 from uuid import uuid4
 from ai_scoring.dao.jsonl import JsonlSessionStore, IdentityConflict
 from ai_scoring.services.scoring import ScoringService, EventConflict, utc_now
+
+def _free_udp_port():
+    import socket
+    with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as probe:
+        probe.bind(('127.0.0.1',0))
+        return probe.getsockname()[1]
 
 class SessionManager:
     def __init__(self, config, clock=utc_now, lease_seconds=30, recording_factory=RecordingWorker, watchdog_seconds=.25, inference_factory=LiveObserver):
@@ -27,8 +33,14 @@ class SessionManager:
         self._inference_attempted=set()
         self._inference_failures={}
         self._shutdown=Event()
+        self._dataset_lock=Lock()
+        self._dataset_threads=[]
         self._watchdog=None
         self._last_purge=0.0
+        if config.dataset_every_seconds is not None:
+            # Sessions finished by an earlier run (including Ctrl+C) are built now.
+            self._dataset(lambda builder:__import__('ai_scoring.services.dataset_builder',fromlist=['build_pending']).build_pending(
+                config.data_directory,config.inference.calibration,config.dataset_every_seconds,log=lambda *_:None))
         if config.recording.enabled or config.inference.enabled:
             self._watchdog=Thread(target=self._watch, args=(watchdog_seconds,),daemon=True,name="session-lease-watchdog")
             self._watchdog.start()
@@ -105,9 +117,10 @@ class SessionManager:
             if self.config.recording.enabled and session_id not in self._recording_attempted:
                 self._recording_attempted.add(session_id)
                 try:
+                    relay={'relay_port':_free_udp_port()} if self.config.inference.enabled else {}
                     recorder=self._recording_factory(service.store,self.config.recording,
                         str(self.config.recorded_source) if self.config.recorded_source is not None else self.config.camera_url,
-                        recorded_file=self.config.recorded_source is not None,clock=self.clock)
+                        recorded_file=self.config.recorded_source is not None,clock=self.clock,**relay)
                     self._recorders[session_id]=recorder
                     recorder.start()
                 except Exception:
@@ -121,9 +134,12 @@ class SessionManager:
             if self.config.inference.enabled and session_id not in self._inference_attempted:
                 self._inference_attempted.add(session_id)
                 try:
-                    observer=self._inference_factory(service,self.config.inference,
-                        str(self.config.recorded_source) if self.config.recorded_source is not None else self.config.camera_url,
-                        recorded_file=self.config.recorded_source is not None,clock=self.clock)
+                    # Cameras may refuse a second stream: track from the recorder's
+                    # loopback relay when recording is running.
+                    relay=getattr(self._recorders.get(session_id),'relay_source',None)
+                    source=relay or (str(self.config.recorded_source) if self.config.recorded_source is not None else self.config.camera_url)
+                    observer=self._inference_factory(service,self.config.inference,source,
+                        recorded_file=relay is None and self.config.recorded_source is not None,clock=self.clock)
                     self._observers[session_id]=observer
                     observer.start()
                 except Exception:
@@ -171,8 +187,24 @@ class SessionManager:
                         self._recorders[session_id].close('session_stopped')
                     except Exception:
                         pass
+                    if self.config.dataset_every_seconds is not None:
+                        records=list(service.store.records)
+                        self._dataset(lambda builder:builder.build_session(session_id,records))
                 self._active = None
             return result
+
+    def _dataset(self,work):
+        """Run dataset extraction off the request path; failures never affect scoring."""
+        from ai_scoring.services.dataset_builder import DatasetBuilder
+        def run():
+            with self._dataset_lock:
+                try:
+                    work(DatasetBuilder(self.config.data_directory,self.config.inference.calibration,self.config.dataset_every_seconds))
+                except Exception:
+                    pass
+        thread=Thread(target=run,daemon=True,name='dataset-builder')
+        self._dataset_threads.append(thread)
+        thread.start()
 
     def close(self):
         self._shutdown.set()

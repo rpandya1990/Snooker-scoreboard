@@ -26,6 +26,14 @@ class LiveCaptureTests(unittest.TestCase):
             InferenceConfig(enabled=True)
         with self.assertRaises(ValueError):
             Config('/tmp/uncreated',Mode.OFF,inference=InferenceConfig(enabled=True,model='fixture'))
+    def test_loopback_relay_source_only(self):
+        settings=InferenceConfig(enabled=True,model='fixture')
+        command=LiveFrameSource(settings,'udp://127.0.0.1:40123').command()
+        self.assertTrue(command[command.index('-i')+1].startswith('udp://127.0.0.1:40123?'))
+        self.assertNotIn('-rtsp_transport',command)
+        for source in ('udp://192.168.1.5:40123','udp://127.0.0.1:40123?localaddr=0.0.0.0','udp://0.0.0.0:1'):
+            with self.subTest(source=source),self.assertRaises(CaptureFailure):
+                LiveFrameSource(settings,source).command()
     def test_local_file_source_explicit_and_paced(self):
         with tempfile.TemporaryDirectory() as directory:
             path=Path(directory)/'fixture.mp4'
@@ -72,3 +80,102 @@ class LiveCaptureTests(unittest.TestCase):
                 InferenceConfig(endpoint=endpoint)
         for endpoint in ('http://127.0.0.1:11434','http://127.0.0.2:11434','http://[::1]:11434'):
             self.assertEqual(InferenceConfig(endpoint=endpoint).endpoint,endpoint)
+    def test_failure_markers_emit_only_fixed_codes(self):
+        from ai_scoring.clients.live_capture import failure_marker
+        cases={
+            'method DESCRIBE failed: 401 Unauthorized':'camera_auth_failed',
+            'method SETUP failed: 453 Not Enough Bandwidth':'camera_session_limit',
+            'Connection to tcp://private-host failed: Connection refused':'camera_connection_failed',
+            'Error reinitializing filters!':'capture_filter_failed',
+            'Error while decoding stream #0:0':'capture_decoder_failed',
+            'ff_frame_thread_encoder_init failed':'capture_encoder_failed',
+        }
+        for line,expected in cases.items():
+            with self.subTest(expected=expected):
+                self.assertEqual(failure_marker(line+' rtsp://fake:private@host/stream'),expected)
+        self.assertIsNone(failure_marker('rtsp://fake:private@host/stream unknown diagnostic'))
+
+    def test_failed_fake_source_reports_marker_without_raw_stderr(self):
+        import os
+        class Process:
+            def __init__(self):
+                output_read,output_write=os.pipe()
+                error_read,error_write=os.pipe()
+                os.close(output_write)
+                os.write(error_write,b'[rtsp] method SETUP failed: 453 Not Enough Bandwidth rtsp://fake:private@host/stream\n')
+                os.close(error_write)
+                self.stdout=os.fdopen(output_read,'rb',buffering=0)
+                self.stderr=os.fdopen(error_read,'rb',buffering=0)
+            def poll(self):
+                return 1
+        source=LiveFrameSource(InferenceConfig(enabled=True,model='fixture'),'rtsp://fake:private@host/stream',process_factory=lambda *a,**k:Process())
+        with self.assertRaises(CaptureFailure) as error:
+            list(source.frames())
+        self.assertEqual(str(error.exception),'camera_session_limit')
+        self.assertNotIn('private',str(error.exception))
+    def test_burst_pairs_and_progress_carriage_return_do_not_create_false_backlog(self):
+        import os
+        class Process:
+            def __init__(self):
+                output_read,output_write=os.pipe()
+                error_read,error_write=os.pipe()
+                os.write(output_write,b'x'*12*20)
+                os.close(output_write)
+                for index in range(20):
+                    prefix=b'frame=1 fps=0 speed=1x\r' if index==1 else b''
+                    os.write(error_write,prefix+f'[Parsed_showinfo] n: {index} pts: {index} pts_time:{index}.0\n'.encode())
+                os.close(error_write)
+                self.stdout=os.fdopen(output_read,'rb',buffering=0)
+                self.stderr=os.fdopen(error_read,'rb',buffering=0)
+            def poll(self):return 0
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'fixture';path.write_bytes(b'fixture')
+            source=LiveFrameSource(InferenceConfig(enabled=True,model='fixture',width=2,height=2),str(path),recorded_file=True,process_factory=lambda *a,**k:Process())
+            self.assertIn('-nostats',source.command())
+            frames=list(source.frames())
+            self.assertEqual(len(frames),20)
+            self.assertEqual([frame.frame.media_time for frame in frames],list(range(20)))
+    def test_real_ffmpeg_unpaced_local_file_burst_preserves_pairs(self):
+        import shutil
+        import subprocess
+        if not shutil.which('ffmpeg'):
+            self.skipTest('optional FFmpeg not installed')
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'burst.mp4'
+            subprocess.run(['ffmpeg','-nostdin','-v','error','-f','lavfi','-i','testsrc=size=64x36:rate=30',
+                '-t','2','-c:v','libx264','-pix_fmt','yuv420p','-threads','1',str(path)],
+                stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,check=True,timeout=15)
+            def unpaced(command,**kwargs):
+                command=list(command)
+                offset=command.index('-readrate')
+                del command[offset:offset+2]
+                return subprocess.Popen(command,**kwargs)
+            source=LiveFrameSource(InferenceConfig(enabled=True,model='fixture',sample_fps=10,width=64,height=36),
+                str(path),recorded_file=True,process_factory=unpaced)
+            try:
+                frames=list(source.frames())
+            finally:
+                source.close()
+            self.assertGreaterEqual(len(frames),15)
+            self.assertTrue(all(len(frame.frame.data)==64*36*3 for frame in frames))
+            self.assertTrue(all(second.frame.media_time>first.frame.media_time for first,second in zip(frames,frames[1:])))
+
+    def test_unmatched_presentation_backlog_still_fails_with_bounded_counts(self):
+        import os
+        class Process:
+            def __init__(self):
+                output_read,output_write=os.pipe();error_read,error_write=os.pipe()
+                os.close(output_write)
+                for index in range(17):
+                    os.write(error_write,f'[Parsed_showinfo] n: {index} pts: {index} pts_time:{index}.0\n'.encode())
+                os.close(error_write)
+                self.stdout=os.fdopen(output_read,'rb',buffering=0)
+                self.stderr=os.fdopen(error_read,'rb',buffering=0)
+            def poll(self):return 0
+        source=LiveFrameSource(InferenceConfig(enabled=True,model='fixture',width=2,height=2),
+            'rtsp://fake:private@host/stream',process_factory=lambda *a,**k:Process())
+        with self.assertRaises(CaptureFailure) as error:
+            list(source.frames())
+        self.assertEqual(str(error.exception),'capture_backlog')
+        self.assertEqual(error.exception.details['queuedPresentationTimestamps'],17)
+        self.assertNotIn('private',str(error.exception.details))

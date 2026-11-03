@@ -65,3 +65,14 @@ companion/data/
 companion/.pytest_cache/
 **/__pycache__/
 **/*.egg-info/
+
+# Detector training environment and outputs
+training/.venv/
+training/runs/
+training/.labelstudio-venv/
+training/.labelstudio-data/
+training/data/
+
+# Model weights (downloaded or trained); regenerate or keep outside git
+*.pt
+*.onnx

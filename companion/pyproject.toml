@@ -5,5 +5,9 @@ build-backend = "setuptools.build_meta"
 name = "snooker-ai-companion"
 version = "0.1.0"
 requires-python = ">=3.11"
+
+[project.optional-dependencies]
+# Live ball detection with an exported ONNX model (--ball-model); the rest is stdlib-only.
+model = ["onnxruntime==1.31.0", "numpy==2.3.5"]
 [tool.setuptools.packages.find]
 where = ["src"]

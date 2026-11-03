@@ -4,4 +4,6 @@
          to allow setting breakpoints, to provide hot reload, etc.
     -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Debug builds may use plain HTTP to the companion (emulator via adb reverse, or the companion Mac on the LAN). -->
+    <application android:networkSecurityConfig="@xml/debug_network_security_config"/>
 </manifest>

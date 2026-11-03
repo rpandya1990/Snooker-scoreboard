@@ -103,3 +103,87 @@ class OllamaAdapterTests(unittest.TestCase):
         self.assertTrue(all('table_not_calibrated' in result.quality_reasons for result in results))
         self.assertTrue(all(result.baseline_reds is None and not result.observations for result in results))
         self.assertFalse(adapter.baseline); self.assertEqual(adapter.accepted,{})
+    def test_selected_baseline_diagnostics_explain_failure_without_model_text(self):
+        from ai_scoring.domain.baseline_diagnostics import summarize_baseline
+        secret='rtsp://fake:private@host/stream'
+        candidate=baseline(['first','second','third'])
+        candidate.update(reds=12,coloursPresent=['yellow','green'],settled=False,confidence=.4)
+        candidate['witnesses'][1].update(reds=9,coloursPresent=['black'],confidence=.2)
+        candidate['witnesses'][0]['frameId']=secret
+        output={'visibility':'uncertain','uncertainty':[secret],'baseline':candidate,'events':[],'rawPrompt':secret}
+        diagnostic=summarize_baseline(output,['first','second','third'],.9)
+        self.assertEqual(diagnostic['reds'],12)
+        self.assertEqual(diagnostic['colourCount'],2)
+        self.assertEqual(diagnostic['witnesses'][1]['reds'],9)
+        self.assertIn('reds_not_15',diagnostic['validationCauses'])
+        self.assertIn('missing_colours',diagnostic['validationCauses'])
+        self.assertIn('baseline_low_confidence',diagnostic['validationCauses'])
+        self.assertIn('witness_frame_not_in_window',diagnostic['validationCauses'])
+        self.assertNotIn(secret,json.dumps(diagnostic))
+        self.assertNotIn('rawPrompt',diagnostic)
+
+    def test_baseline_diagnostic_missing_witnesses_and_invalid_numeric_values(self):
+        from ai_scoring.domain.baseline_diagnostics import summarize_baseline,sanitize_summary
+        missing=summarize_baseline({'visibility':'clear','uncertainty':[],'baseline':None},[],.9)
+        self.assertIn('baseline_missing',missing['validationCauses'])
+        output={'visibility':'clear','baseline':{**baseline(['first','second','third']),'witnesses':[], 'reds':True,'confidence':float('nan')}}
+        diagnostic=summarize_baseline(output,['first','second','third'],.9)
+        self.assertIn('witness_count_invalid',diagnostic['validationCauses'])
+        self.assertIn('invalid_red_count',diagnostic['validationCauses'])
+        self.assertIsNone(diagnostic['reds'])
+        self.assertIsNone(diagnostic['confidence'])
+        safe=sanitize_summary({'reds':100,'witnessCount':100,'confidence':float('inf'),'validationCauses':['baseline_missing','private raw message']})
+        self.assertIsNone(safe['reds']);self.assertIsNone(safe['confidence'])
+        self.assertEqual(safe['validationCauses'],['baseline_missing'])
+
+    def test_adapter_exposes_only_selected_last_baseline_summary(self):
+        adapter,client=self.adapter()
+        self.ready(adapter)
+        diagnostic=adapter.last_baseline_diagnostic
+        self.assertEqual(diagnostic['reds'],15)
+        self.assertEqual(diagnostic['witnessCount'],3)
+        self.assertTrue(diagnostic['baselineAccepted'])
+        self.assertEqual(diagnostic['validationCauses'],[])
+        self.assertNotIn('images',json.dumps(diagnostic))
+        self.assertNotIn('frameId',diagnostic)
+    def test_window_schema_and_prompt_ground_latest_baseline_without_global_mutation(self):
+        from ai_scoring.services.ollama_adapter import SCHEMA
+        before=json.dumps(SCHEMA,sort_keys=True)
+        adapter,client=self.adapter()
+        self.ready(adapter)
+        ids=[item['id'] for item in adapter.window]
+        schema=adapter._window_schema()
+        fields=schema['properties']['baseline']['anyOf'][0]['properties']
+        self.assertEqual(fields['frameId']['const'],ids[-1])
+        self.assertEqual(fields['witnesses']['items']['properties']['frameId']['enum'],ids)
+        self.assertEqual(schema['properties']['events']['items']['properties']['afterFrameId']['enum'],ids)
+        self.assertEqual(client.calls[-1][1]['requiredBaselineFrameId'],ids[-1])
+        self.assertIn('final witness frameId must equal baseline.frameId',adapter._prompt())
+        self.assertEqual(json.dumps(SCHEMA,sort_keys=True),before)
+
+    def test_wrong_latest_baseline_reference_remains_rejected_not_rewritten(self):
+        from copy import deepcopy
+        adapter,client=self.adapter()
+        self.ready(adapter)
+        adapter.baseline=False
+        ids=[item['id'] for item in adapter.window]
+        output={'visibility':'clear','uncertainty':[],'baseline':baseline(ids),'events':[]}
+        output['baseline']['frameId']=ids[0]
+        original=deepcopy(output)
+        observations,confirmed,reasons=adapter._validate(output)
+        self.assertIsNone(confirmed)
+        self.assertIn('table_not_initialised',reasons)
+        self.assertEqual(output,original)
+
+    def test_chronological_witnesses_ending_before_latest_window_are_rejected(self):
+        adapter,client=self.adapter()
+        self.ready(adapter)
+        client.mode='none'
+        adapter.observe(frame(4),context())
+        adapter.baseline=False
+        ids=[item['id'] for item in adapter.window]
+        output={'visibility':'clear','uncertainty':[],'baseline':baseline(ids[:3]),'events':[]}
+        observations,confirmed,reasons=adapter._validate(output)
+        self.assertIsNone(confirmed)
+        self.assertIn('table_not_initialised',reasons)
+

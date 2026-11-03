@@ -18,8 +18,12 @@ from ai_scoring.services.scoring import utc_now, timestamp
 class RecordingWorker:
     def __init__(self, store, config, source, recorded_file=False, clock=utc_now,
                  monotonic=time.monotonic, process_factory=subprocess.Popen,
-                 disk_usage=shutil.disk_usage, poll_seconds=.25, metadata_runner=subprocess.run):
+                 disk_usage=shutil.disk_usage, poll_seconds=.25, metadata_runner=subprocess.run,
+                 relay_port=None):
         self.store,self.config=store,config
+        if relay_port is not None and (type(relay_port) is not int or not 0<relay_port<65536):
+            raise ValueError('invalid relay port')
+        self._relay_port=relay_port
         self._source=source
         self._recorded_file=recorded_file
         self._clock,self._monotonic=clock,monotonic
@@ -52,6 +56,13 @@ class RecordingWorker:
 
     def _record(self, kind, payload):
         self.store.append({'id':kind+':'+str(uuid4()),'type':kind,'timestamp':self._clock().isoformat(),'payload':payload})
+
+    @property
+    def relay_source(self):
+        """Loopback copy of the recorded stream for live tracking, while recording."""
+        if self._relay_port is None or self._state!='recording':
+            return None
+        return f'udp://127.0.0.1:{self._relay_port}'
 
     @property
     def health(self):
@@ -116,6 +127,11 @@ class RecordingWorker:
                     '-map','0:v:0','-an','-c','copy','-f','segment','-segment_time',str(self.config.segment_seconds),
                     '-segment_list',str(self._list_path),'-segment_list_type','csv','-reset_timestamps','1',
                     str(self._directory/(self._prefix+'%06d.mkv'))]
+                if self._relay_port is not None:
+                    # One camera connection: also stream an unmodified copy to live
+                    # tracking. UDP never blocks, so slow tracking cannot stall recording.
+                    command+=['-map','0:v:0','-an','-c','copy','-f','mpegts',
+                        f'udp://127.0.0.1:{self._relay_port}?pkt_size=1316']
                 self._anchor_utc,self._anchor_mono=self._clock(),self._monotonic()
                 self._process=self._factory(command,stdin=subprocess.PIPE,stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,shell=False)

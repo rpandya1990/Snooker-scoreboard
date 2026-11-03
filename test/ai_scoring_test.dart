@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/foundation.dart';
 import 'package:snooker_scoreboard/ai_scoring/coordinator.dart';
 
 class FakeTransport implements ObserverTransport {
@@ -24,6 +25,21 @@ class FakeStore implements PendingStore {
     if (fail) throw StateError('disk full');
     saved = events;
   }
+}
+
+class DiagnosticTransport implements ObserverTransport {
+  final Object error;
+  DiagnosticTransport(this.error);
+  @override
+  Future<Map<String, dynamic>> request(
+          String method, String path, Map<String, dynamic>? body) async =>
+      throw error;
+}
+
+class DiagnosticStore implements PendingStore {
+  @override
+  Future<void> save(List<Map<String, dynamic>> events) async =>
+      throw StateError('secret-token rtsp://private-camera private-file');
 }
 
 void main() {
@@ -105,5 +121,51 @@ void main() {
         transport.events.firstWhere((e) => e['type'] == 'break_committed');
     expect(entry['predictionId'], 'p1');
     expect(entry['source'], 'ai_selected_edited');
+  });
+  test(
+      'debug diagnostics expose HTTP status and storage category without raw secrets',
+      () async {
+    final messages = <String>[];
+    final original = debugPrint;
+    debugPrint = (String? message, {int? wrapWidth}) {
+      if (message != null) messages.add(message);
+    };
+    try {
+      final network = AiCoordinator(const AiConfig(mode: AiMode.dryRun),
+          transport: DiagnosticTransport(ObserverTransportException(
+              ObserverFailure.httpResponse,
+              status: 400)));
+      network.start();
+      await Future<void>.delayed(Duration.zero);
+      await network.sync();
+      network.stop();
+      await Future<void>.delayed(Duration.zero);
+      expect(
+          messages.any((m) =>
+              m.contains('stage=sessionOpen reason=httpResponse status=400')),
+          isTrue);
+      final storage = AiCoordinator(const AiConfig(mode: AiMode.dryRun),
+          store: DiagnosticStore());
+      storage.start();
+      await storage.flushStorage();
+      storage.stop();
+      await storage.flushStorage();
+      expect(
+          messages.any(
+              (m) => m.contains('stage=storageWrite reason=storageFailure')),
+          isTrue);
+      final unexpected = AiCoordinator(const AiConfig(mode: AiMode.dryRun),
+          transport: DiagnosticTransport(
+              StateError('secret-token rtsp://private-camera private-file')));
+      unexpected.start();
+      await Future<void>.delayed(Duration.zero);
+      unexpected.stop();
+      await Future<void>.delayed(Duration.zero);
+      expect(messages.join(), isNot(contains('secret-token')));
+      expect(messages.join(), isNot(contains('rtsp://')));
+      expect(messages.join(), isNot(contains('private-file')));
+    } finally {
+      debugPrint = original;
+    }
   });
 }

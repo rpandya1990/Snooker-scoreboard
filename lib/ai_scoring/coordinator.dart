@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 
 enum AiMode { off, dryRun, assist }
 
@@ -19,6 +20,41 @@ class AiConfig {
         endpoint: const String.fromEnvironment('AI_SCORING_ENDPOINT'),
         token: const String.fromEnvironment('AI_SCORING_TOKEN'));
   }
+}
+
+enum ObserverFailure {
+  invalidConfiguration,
+  httpResponse,
+  timeout,
+  network,
+  tls,
+  invalidResponse,
+  unexpected
+}
+
+/// Safe diagnostics carry fixed categories/status only, never URLs or payloads.
+class ObserverTransportException extends StateError {
+  final ObserverFailure reason;
+  final int? status;
+  ObserverTransportException(this.reason, {int? status})
+      : status =
+            status != null && status >= 100 && status <= 599 ? status : null,
+        super('Observer transport failed');
+  @override
+  String toString() =>
+      'ObserverTransportException(${reason.name}${status == null ? '' : ', status=$status'})';
+}
+
+void _debugObserverFailure(String stage, Object error,
+    {String fallback = 'observerFailure'}) {
+  assert(() {
+    final reason =
+        error is ObserverTransportException ? error.reason.name : fallback;
+    final status = error is ObserverTransportException ? error.status : null;
+    debugPrint(
+        '[AI scoring] stage=$stage reason=$reason${status == null ? '' : ' status=$status'}');
+    return true;
+  }());
 }
 
 abstract class ObserverTransport {
@@ -90,7 +126,8 @@ class AiCoordinator {
     if (!enabled || _started) return;
     _started = true;
     _event('frame_started', {'frameId': frameId, 'runId': runId});
-    _timer = Timer.periodic(const Duration(seconds: 2), (_) => sync());
+    // Frequent polling so a pot seen just before score entry is already cached.
+    _timer = Timer.periodic(const Duration(milliseconds: 500), (_) => sync());
     sync();
   }
 
@@ -225,7 +262,9 @@ class AiCoordinator {
     _storage = _storage.then((_) async {
       try {
         await store?.save(snapshot);
-      } catch (_) {
+      } catch (error) {
+        _debugObserverFailure('storageWrite', error,
+            fallback: 'storageFailure');
         _healthy = false;
         _prediction = null;
       }
@@ -235,11 +274,14 @@ class AiCoordinator {
   Future<void> sync() async {
     if (!enabled || _busy || transport == null) return;
     _busy = true;
+    var stage = 'pendingStorage';
     try {
       await _storage;
       if (!_opened) {
+        stage = 'outboxReplay';
         if (store is RecoverablePendingStore)
           await (store as RecoverablePendingStore).replay(transport!);
+        stage = 'sessionOpen';
         await transport!.request('POST', '/v1/sessions', {
           'sessionId': sessionId,
           'mode': config.mode == AiMode.assist ? 'assist' : 'dry-run'
@@ -248,12 +290,14 @@ class AiCoordinator {
       }
       while (_pending.isNotEmpty) {
         final event = _pending.first;
+        stage = 'eventDelivery';
         await transport!
             .request('POST', '/v1/sessions/$sessionId/events', event);
         _pending.removeAt(0);
         _save();
       }
       if (!_stopped) {
+        stage = 'heartbeat';
         final sent = now().toUtc();
         final heartbeat = await transport!.request(
             'POST',
@@ -274,11 +318,16 @@ class AiCoordinator {
           _clockUncertainty = null;
         }
 
+        stage = 'predictionPoll';
         final p = await transport!
             .request('GET', '/v1/sessions/$sessionId/prediction', null);
         if (!_stopped) _prediction = p;
       }
-    } catch (_) {
+    } catch (error) {
+      _debugObserverFailure(stage, error,
+          fallback: stage == 'outboxReplay'
+              ? 'outboxReplayFailure'
+              : 'observerFailure');
       _prediction = null;
       _opened = false;
     } finally {

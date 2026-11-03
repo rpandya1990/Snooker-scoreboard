@@ -143,3 +143,21 @@ class LiveObserverTests(unittest.TestCase):
         self.assertEqual(prediction['status'],'available')
         self.assertEqual(prediction['promptVersion'],'fixture-v1')
         self.assertEqual(prediction['inferenceLatencyMs'],0)
+    def test_selected_baseline_diagnostic_persists_with_safe_provenance(self):
+        import json
+        secret='rtsp://fake:private@host/stream'
+        self.adapter.last_baseline_diagnostic={'reds':12,'coloursPresent':['yellow',secret],'confidence':.5,'phase':'red_colour',
+            'visibility':'clear','settled':True,'witnessCount':3,'witnesses':[{'reds':10,'coloursPresent':['green'], 'confidence':.4}],
+            'validationCauses':['reds_not_15',secret],'rawModelText':secret}
+        self.adapter.metadata.update(rawPrompt=secret,endpoint=secret)
+        self.observer.submit(self.captured())
+        self.process_next()
+        diagnostics=[r['payload'] for r in self.store.records if r['type']=='visual_diagnostic' and r['payload']['reason']=='baseline_check']
+        self.assertEqual(len(diagnostics),1)
+        diagnostic=diagnostics[0]
+        self.assertEqual(diagnostic['modelVersion'],'fixture')
+        self.assertEqual(diagnostic['promptVersion'],'fixture-v1')
+        self.assertEqual(diagnostic['inferenceLatencyMs'],0)
+        self.assertEqual(diagnostic['baselineSummary']['reds'],12)
+        self.assertEqual(diagnostic['baselineSummary']['validationCauses'],['reds_not_15'])
+        self.assertNotIn(secret,json.dumps(diagnostic))
